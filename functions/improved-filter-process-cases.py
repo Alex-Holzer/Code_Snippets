@@ -1,13 +1,5 @@
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import (
-    col,
-    lower,
-    first,
-    last,
-    collect_set,
-    array_contains,
-    lit,
-)
+from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 from typing import Union, List, Optional
 
@@ -23,7 +15,7 @@ def filter_process_cases(
     timestamp_column: str = "EVENTTIME",
 ) -> DataFrame:
     """
-    Highly optimized function to filter process cases based on specified flow conditions
+    High-performance function to filter process cases based on specified flow conditions
     for large datasets (case-insensitive).
 
     Args:
@@ -68,38 +60,65 @@ def filter_process_cases(
     # Create a window spec for each case
     case_window = Window.partitionBy(case_column).orderBy(timestamp_column)
 
-    # Precompute case summary
-    case_summary = df.groupBy(case_column).agg(
-        collect_set(lower(col(activity_column))).alias("activities"),
-        first(lower(col(activity_column))).alias("first_activity"),
-        last(lower(col(activity_column))).alias("last_activity"),
+    # Optimize by selecting only necessary columns and applying lowercase once
+    df_optimized = df.select(
+        F.col(case_column),
+        F.lower(F.col(activity_column)).alias("activity_lower"),
+        F.col(timestamp_column),
     )
 
-    # Apply filters
+    # Calculate first and last activities efficiently
+    df_with_endpoints = df_optimized.withColumn(
+        "is_first", F.row_number().over(case_window) == 1
+    ).withColumn(
+        "is_last",
+        F.row_number().over(case_window.orderBy(F.desc(timestamp_column))) == 1,
+    )
+
+    # Aggregate case information efficiently
+    case_summary = df_with_endpoints.groupBy(case_column).agg(
+        F.collect_set("activity_lower").alias("activities"),
+        F.first(F.when(F.col("is_first"), F.col("activity_lower"))).alias(
+            "first_activity"
+        ),
+        F.first(F.when(F.col("is_last"), F.col("activity_lower"))).alias(
+            "last_activity"
+        ),
+    )
+
+    # Prepare filter conditions
+    filter_conditions = []
+
     if flows_through:
-        case_summary = case_summary.filter(
-            *[
-                array_contains(col("activities"), lit(activity))
+        filter_conditions.extend(
+            [
+                F.array_contains(F.col("activities"), F.lit(activity))
                 for activity in flows_through
             ]
         )
 
     if not_flows_through:
-        case_summary = case_summary.filter(
-            *[
-                ~array_contains(col("activities"), lit(activity))
+        filter_conditions.extend(
+            [
+                ~F.array_contains(F.col("activities"), F.lit(activity))
                 for activity in not_flows_through
             ]
         )
 
     if starts_with:
-        case_summary = case_summary.filter(col("first_activity").isin(starts_with))
+        filter_conditions.append(F.col("first_activity").isin(starts_with))
 
     if ends_with:
-        case_summary = case_summary.filter(col("last_activity").isin(ends_with))
+        filter_conditions.append(F.col("last_activity").isin(ends_with))
+
+    # Apply all filter conditions at once
+    if filter_conditions:
+        case_summary = case_summary.filter(
+            F.reduce(lambda x, y: x & y, filter_conditions)
+        )
 
     # Get the list of cases that meet all conditions
     valid_cases = case_summary.select(case_column)
 
     # Filter the original DataFrame
-    return df.join(valid_cases, case_column, "inner")
+    return df.join(F.broadcast(valid_cases), case_column, "inner")
