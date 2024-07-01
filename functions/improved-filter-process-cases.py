@@ -2,6 +2,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 from typing import Union, List, Optional
+from functools import reduce
 
 
 def filter_process_cases(
@@ -113,9 +114,8 @@ def filter_process_cases(
 
     # Apply all filter conditions at once
     if filter_conditions:
-        case_summary = case_summary.filter(
-            F.reduce(lambda x, y: x & y, filter_conditions)
-        )
+        combined_filter = reduce(lambda x, y: x & y, filter_conditions)
+        case_summary = case_summary.filter(combined_filter)
 
     # Get the list of cases that meet all conditions
     valid_cases = case_summary.select(case_column)
