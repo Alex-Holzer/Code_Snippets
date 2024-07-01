@@ -1,72 +1,122 @@
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import year, month, to_timestamp
-from delta.tables import DeltaTable
+from pyspark.sql import functions as F
+from delta import DeltaTable
+from typing import Optional, List
+import time
 
-def optimize_and_store_dataframe(df: DataFrame, 
-                                 storage_path: str, 
-                                 partition_cols: list = ['year', 'month'],
-                                 case_key_col: str = "_CASE_KEY",
-                                 event_time_col: str = "EVENTTIME") -> None:
+def store_dataframe_efficiently(
+    df: DataFrame,
+    output_path: str,
+    case_key_col: str = "_CASE_KEY",
+    timestamp_col: str = "EVENTTIME",
+    partition_columns: Optional[List[str]] = None,
+    num_buckets: int = 200,
+    mode: str = "overwrite",
+    z_order_cols: Optional[List[str]] = None
+) -> None:
     """
-    Optimize and store a DataFrame efficiently for later process mining analysis.
+    Efficiently store a DataFrame using partitioning, bucketing, and Delta format.
 
-    This function performs the following optimizations:
-    1. Adds year and month columns for partitioning
-    2. Repartitions the DataFrame by _CASE_KEY
-    3. Writes the data in Delta format with optimized settings
-    4. Optimizes the table and computes statistics for query optimization
+    This function optimizes the storage of large DataFrames with many unique case keys
+    by partitioning on both case key and time, using bucketing, and leveraging the
+    Delta format for improved query performance and data management.
 
     Args:
-        df (DataFrame): Input DataFrame to be stored
-        storage_path (str): Path where the optimized data will be stored
-        partition_cols (list): Columns to use for partitioning (default: ['year', 'month'])
-        case_key_col (str): Name of the case key column (default: "_CASE_KEY")
-        event_time_col (str): Name of the event time column (default: "EVENTTIME")
+        df (DataFrame): The input DataFrame to be stored.
+        output_path (str): The path where the DataFrame will be stored.
+        case_key_col (str): The name of the case key column. Default is "_CASE_KEY".
+        timestamp_col (str): The name of the timestamp column. Default is "EVENTTIME".
+        partition_columns (Optional[List[str]]): Additional columns to partition by.
+            Default is None.
+        num_buckets (int): The number of buckets to use for the case key column.
+            Default is 200.
+        mode (str): The save mode to use ("overwrite" or "append"). Default is "overwrite".
+        z_order_cols (Optional[List[str]]): Columns to use for Z-Ordering optimization.
+            Default is None.
 
-    Returns:
-        None
+    Raises:
+        ValueError: If input validation fails.
 
     Example:
-        >>> df = spark.read.parquet("path/to/original/data")
-        >>> df_hashed = hash_case_key(df)
-        >>> optimize_and_store_dataframe(df_hashed, "dbfs:/path/to/optimized/data")
+        >>> df = spark.read.parquet("path/to/input_data")
+        >>> store_dataframe_efficiently(
+        ...     df,
+        ...     "path/to/optimized_data",
+        ...     partition_columns=["DIMENSION 1"],
+        ...     num_buckets=300,
+        ...     z_order_cols=["_CASE_KEY", "EVENTTIME"]
+        ... )
     """
+    start_time = time.time()
+
+    # Input validation
+    if not isinstance(df, DataFrame):
+        raise ValueError("Input 'df' must be a PySpark DataFrame")
+    if case_key_col not in df.columns:
+        raise ValueError(f"Column '{case_key_col}' not found in DataFrame")
+    if timestamp_col not in df.columns:
+        raise ValueError(f"Column '{timestamp_col}' not found in DataFrame")
+    if partition_columns and not set(partition_columns).issubset(df.columns):
+        raise ValueError("One or more partition columns not found in DataFrame")
+    if mode not in ["overwrite", "append"]:
+        raise ValueError("Mode must be either 'overwrite' or 'append'")
+    if z_order_cols and not set(z_order_cols).issubset(df.columns):
+        raise ValueError("One or more Z-Order columns not found in DataFrame")
+
+    # Cache the DataFrame for improved performance
+    df.cache()
+    df.count()  # Materialize the cache
+
     # Add year and month columns for partitioning
-    df_optimized = df.withColumn("year", year(to_timestamp(event_time_col))) \
-                     .withColumn("month", month(to_timestamp(event_time_col)))
+    df_with_partitions = df.withColumn(
+        "year", F.year(F.col(timestamp_col))
+    ).withColumn(
+        "month", F.month(F.col(timestamp_col))
+    )
 
-    # Repartition the DataFrame by _CASE_KEY
-    num_partitions = df_optimized.rdd.getNumPartitions()
-    df_optimized = df_optimized.repartition(num_partitions, case_key_col)
+    # Prepare partition columns
+    partition_cols = ["year", "month"]
+    if partition_columns:
+        partition_cols.extend(partition_columns)
 
-    # Write the data in Delta format with optimized settings
-    (df_optimized.write
-        .format("delta")
-        .partitionBy(partition_cols)
-        .option("overwriteSchema", "true")
-        .option("mergeSchema", "true")
-        .mode("overwrite")
-        .save(storage_path))
+    # Write the DataFrame using Delta format with partitioning and bucketing
+    (df_with_partitions.write
+     .format("delta")
+     .partitionBy(*partition_cols)
+     .bucketBy(num_buckets, case_key_col)
+     .sortBy(case_key_col, timestamp_col)
+     .mode(mode)
+     .option("overwriteSchema", "true")
+     .save(output_path))
 
     # Optimize the Delta table
-    delta_table = DeltaTable.forPath(spark, storage_path)
-    delta_table.optimize().executeCompaction()
+    delta_table = DeltaTable.forPath(spark, output_path)
+    
+    # Perform Z-Ordering if specified
+    if z_order_cols:
+        delta_table.optimize().executeZOrder(z_order_cols)
+    else:
+        delta_table.optimize().executeCompaction()
 
-    # Compute statistics for query optimization
-    delta_table.generate("SYMLINK_FORMAT_MANIFEST")
-    delta_table.vacuum()
+    # Unpersist the cached DataFrame
+    df.unpersist()
 
-    print(f"DataFrame optimized and stored successfully at {storage_path}")
+    end_time = time.time()
+    duration = end_time - start_time
+    
+    print(f"🚀 DataFrame storage optimization complete! 🎉")
+    print(f"📊 Data stored at: {output_path}")
+    print(f"⏱️ Process completed in {duration:.2f} seconds")
+    print(f"🔍 Optimizations applied: Partitioning, Bucketing, Delta format")
+    if z_order_cols:
+        print(f"🔀 Z-Ordering applied on: {', '.join(z_order_cols)}")
+    print("📈 Your data is now supercharged for lightning-fast queries! ⚡")
 
-# Usage example
-def main(spark):
-    # Assume df_hashed is your DataFrame with hashed _CASE_KEY
-    storage_path = "dbfs:/path/to/optimized/process_mining_data"
-    optimize_and_store_dataframe(df_hashed, storage_path)
-
-    # To read the optimized data later:
-    optimized_df = spark.read.format("delta").load(storage_path)
-    optimized_df.show()
-
-# Note: The main function is provided for demonstration purposes.
-# In a real Databricks notebook, you would call this function directly on your DataFrame.
+# Example usage:
+# df = spark.read.parquet("path/to/input_data")
+# store_dataframe_efficiently(
+#     df, 
+#     "path/to/optimized_data", 
+#     partition_columns=["DIMENSION 1"],
+#     z_order_cols=["_CASE_KEY", "EVENTTIME"]
+# )
