@@ -1,85 +1,76 @@
 from pyspark.sql import functions as F
 
-# Define the conditions for VORGANGS_TYP_MOP_TYPE_NAME
-conditions = [
-    "VORGANGS_TYP_MOP_TYPE_NAME LIKE '%PBLNeuAV%'",
-    "VORGANGS_TYP_MOP_TYPE_NAME LIKE '%PBLNeuV%'",
-    "VORGANGS_TYP_MOP_TYPE_NAME LIKE '%MLNeuFVLV%'",
-    "VORGANGS_TYP_MOP_TYPE_NAME LIKE '%PFNGAUTUEvg%'",
-    "VORGANGS_TYP_MOP_TYPE_NAME LIKE '%VSLNGAUTUEvg%'",
-]
 
-# Create the DataFrame with optimized operations
-df_datalake = spark.sql(
-    f"""
-    SELECT DISTINCT 
-        VERTRAGSNUMMER, 
-        trim(MOP_ID) AS MOP_ID, 
-        ERFT_TS, 
-        AKTION, 
-        FACHLICHER_STATUS, 
-        GRUND, 
-        TARGET_ACTOR_ID, 
-        FACHLICHER_SCHRITT,
-        ORG_EINHEIT_ID 
-    FROM prod_app_degi_zdw_workflow.v_udw80f002t 
-    WHERE {" OR ".join(conditions)}
-"""
-)
-
-# Perform the join operation
-GLIFE_BASIS_plus = df_datalake.join(
-    glife_basis_plus, df_datalake.MOP_ID == glife_basis_plus.VORGANG_ID, "left"
-)
-
-# Cache the resulting DataFrame if it will be used multiple times
-GLIFE_BASIS_plus.cache()
-
-# Show the first few rows of the result (optional)
-GLIFE_BASIS_plus.show(5)
+# Define a single trim function
+def trim_col(col_name):
+    return F.trim(F.col(col_name))
 
 
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-
-# Read the table using spark.table()
-df = spark.table("prod_app_degi_zdw_workflow.v_udw80f002t")
-
-# Define the conditions for VORGANGS_TYP_MOP_TYPE_NAME
-mop_type_conditions = [
-    F.col("VORGANGS_TYP_MOP_TYPE_NAME").like("%PBLNeuAV%"),
-    F.col("VORGANGS_TYP_MOP_TYPE_NAME").like("%PBLNeuV%"),
-    F.col("VORGANGS_TYP_MOP_TYPE_NAME").like("%MLNeuFVLV%"),
-    F.col("VORGANGS_TYP_MOP_TYPE_NAME").like("%PFNGAUTUEvg%"),
-    F.col("VORGANGS_TYP_MOP_TYPE_NAME").like("%VSLNGAUTUEvg%"),
-]
-
-# Create the DataFrame with optimized operations
-df_datalake = df.select(
+# Apply trimming to all relevant columns at once
+columns_to_trim = [
     "VERTRAGSNUMMER",
-    F.trim(F.col("MOP_ID")).alias("MOP_ID"),
-    "ERFT_TS",
+    "MOP_ID",
+    "VW_NAME",
+    "VB_NAME",
+    "VS_NAME",
     "AKTION",
     "FACHLICHER_STATUS",
-    "GRUND",
-    "TARGET_ACTOR_ID",
     "FACHLICHER_SCHRITT",
+    "GRUND",
     "ORG_EINHEIT_ID",
-).where(F.reduce(lambda a, b: a | b, mop_type_conditions))
-
-# Remove duplicates
-df_datalake = df_datalake.distinct()
-
-# Perform the join operation
-GLIFE_BASIS_plus = df_datalake.join(
-    spark.table("glife_basis_plus"), df_datalake.MOP_ID == F.col("VORGANG_ID"), "left"
+    "AG_KEY",
+]
+df_trimmed = df.select(
+    *[trim_col(col).alias(col) for col in columns_to_trim],
+    *[col for col in df.columns if col not in columns_to_trim]
 )
 
-# Cache the resulting DataFrame if it will be used multiple times
-GLIFE_BASIS_plus.cache()
+# Define conditions for VW_DESC_MOD
+vw_desc_mod_conditions = [
+    (F.col("VB_NAME").like("%Post%"), "Postbank"),
+    (F.col("MANDANT").isin(["PLAT", "PAT"]), "PAT"),
+    (F.col("VS_NAME").like("%noris%"), "Norisbank"),
+    (F.col("VW_NAME").isNull(), "Kein Vertriebsweg"),
+    (F.col("VW_NAME").isin(["Z-EP", "ZEP"]), "ZEP"),
+    (F.col("VW_NAME").isin(["Broker Retail"]), "Makler"),
+    (F.col("VW_NAME").isin(["Bank"]), "DB"),
+]
 
-# Show the first few rows of the result (optional)
-GLIFE_BASIS_plus.show(5)
-
-# Optionally, if you need to optimize the number of partitions:
-# GLIFE_BASIS_plus = GLIFE_BASIS_plus.repartition(100)  # Adjust the number based on your cluster size and data volume
+# Final DataFrame transformation
+df_final = df_trimmed.select(
+    F.col("_CASE_KEY_GLIFE").alias("_CASE_KEY"),
+    F.when(
+        (F.col("VERTRAGSNUMMER").like("%000000%"))
+        & (F.col("Vorgangs_Indicator").isNull()),
+        F.col("VERTRAGSNUMMER_GLIFE"),
+    )
+    .otherwise(F.col("VERTRAGSNUMMER"))
+    .alias("VERTRAGSNUMMER"),
+    F.col("MOP_ID").alias("VORGANGSNUMMER"),
+    "ATRG_NR",
+    "VW_KEY",
+    F.col("VW_NAME").alias("Vertriebsweg"),
+    "VB_KEY",
+    F.col("VB_NAME").alias("Vertriebsbereich"),
+    "VS_KEY",
+    F.col("VS_NAME").alias("Vertriebsstelle"),
+    F.to_timestamp(F.col("ERFT_TS"), "y.M.d H:m:s").alias("ERFT_TS"),
+    "AKTION",
+    F.when(F.col("FACHLICHER_STATUS") == "", None).otherwise(
+        F.col("FACHLICHER_STATUS")
+    ),
+    "FACHLICHER_SCHRITT",
+    F.when(F.col("GRUND") == "", None)
+    .when(
+        F.col("GRUND").contains("besonderer Versandhinweis"),
+        "besonderer Versandhinweis",
+    )
+    .otherwise(F.col("GRUND"))
+    .alias("GRUND"),
+    "ORG_EINHEIT_ID",
+    F.coalesce(
+        *[F.when(cond, val) for cond, val in vw_desc_mod_conditions], F.lit("Sonstige")
+    ).alias("VW_DESC_MOD"),
+    "AG_KEY",
+    F.lit("VORGANGSDATEN").alias("DATENHERKUNFT"),
+).distinct()
