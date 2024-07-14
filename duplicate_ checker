@@ -1,0 +1,93 @@
+Certainly, I'll improve the code by converting it into a function. This will make it more reusable and easier to integrate into larger projects.
+
+
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql import Window
+from pyspark.sql import functions as F
+
+def find_duplicates(df, subset=None):
+    """
+    Find duplicate rows in a PySpark DataFrame.
+    
+    Args:
+    df (pyspark.sql.DataFrame): The input DataFrame.
+    subset (list, optional): List of columns to consider for identifying duplicates.
+                             If None, all columns are considered. Default is None.
+    
+    Returns:
+    pyspark.sql.DataFrame: A DataFrame containing only the duplicate rows.
+    """
+    # If subset is not provided, use all columns
+    if subset is None:
+        subset = df.columns
+    
+    # Define a window specification that partitions by the specified columns
+    window_spec = Window.partitionBy(subset)
+    
+    # Add a count column using the window function
+    df_with_count = df.withColumn("count", F.count("*").over(window_spec))
+    
+    # Filter the rows where the count is greater than 1
+    duplicates = df_with_count.filter(F.col("count") > 1).drop("count")
+    
+    return duplicates
+
+# Example usage:
+if __name__ == "__main__":
+    # Create a SparkSession
+    spark = SparkSession.builder.appName("FindDuplicates").getOrCreate()
+    
+    # Create a sample DataFrame
+    data = [
+        (1, "A", 100),
+        (2, "B", 200),
+        (1, "A", 100),  # Duplicate
+        (3, "C", 300),
+        (2, "B", 200),  # Duplicate
+        (4, "D", 400)
+    ]
+    df = spark.createDataFrame(data, ["id", "name", "value"])
+    
+    # Find duplicates considering all columns
+    all_duplicates = find_duplicates(df)
+    print("Duplicates based on all columns:")
+    all_duplicates.show()
+    
+    # Find duplicates considering only 'id' and 'name' columns
+    partial_duplicates = find_duplicates(df, subset=['id', 'name'])
+    print("Duplicates based on 'id' and 'name' columns:")
+    partial_duplicates.show()
+    
+    # Stop the SparkSession
+    spark.stop()
+```
+
+This improved version offers several advantages:
+
+1. **Reusability**: The code is now encapsulated in a function `find_duplicates()`, which can be easily imported and used in other scripts or notebooks.
+
+2. **Flexibility**: The function accepts an optional `subset` parameter, allowing you to specify which columns to consider when identifying duplicates. If no subset is provided, it defaults to using all columns.
+
+3. **Clarity**: The function includes a docstring that explains its purpose, parameters, and return value, making it easier for others (or yourself in the future) to understand and use the function.
+
+4. **Example Usage**: The script includes an example of how to use the function, demonstrating both full and partial column matching for duplicates.
+
+5. **Proper SparkSession Management**: The example code creates a SparkSession at the beginning and stops it at the end, which is a good practice for resource management.
+
+To use this function in your own code, you would typically import it from a module where it's defined, then call it with your DataFrame:
+
+```python
+from your_module import find_duplicates
+
+# Assuming 'df' is your existing DataFrame
+duplicates = find_duplicates(df)
+duplicates.show()
+
+# Or, to find duplicates based on specific columns:
+duplicates = find_duplicates(df, subset=['column1', 'column2'])
+duplicates.show()
+```
+
+This approach makes your code more modular and easier to maintain. Would you like me to explain any part of this improved code in more detail?​​​​​​​​​​​​​​​​
