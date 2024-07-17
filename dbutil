@@ -1,0 +1,73 @@
+Natürlich, wir können eine Funktion erstellen, die mehrere Werte für die Suche akzeptiert. Das ermöglicht eine flexiblere und mächtigere Suchfunktion über mehrere Spalten hinweg. Lassen Sie uns das Skript entsprechend anpassen.
+
+
+
+```python
+from pyspark.sql.functions import col
+from pyspark.sql.types import StringType
+from databricks.widgets import text, multiselect
+from functools import reduce
+
+def create_multi_search_widget(columns):
+    # Erstellen Sie ein Multiselect-Widget für die Spaltenauswahl
+    multiselect("search_columns", defaultValue=columns[0], choices=columns, label="Select columns to search")
+    
+    # Erstellen Sie ein Textfeld-Widget für die Suche
+    text("search_value", label="Enter search value")
+
+def filter_dataframe_multi(df, columns):
+    # Holen Sie sich die ausgewählten Spalten
+    selected_columns = dbutils.widgets.get("search_columns").split(",")
+    
+    # Holen Sie sich den Suchwert
+    search_value = dbutils.widgets.get("search_value")
+    
+    if search_value:
+        # Erstellen Sie eine Liste von Filterbedingungen
+        conditions = [col(column).contains(search_value) for column in selected_columns]
+        
+        # Kombinieren Sie die Bedingungen mit OR
+        combined_condition = reduce(lambda a, b: a | b, conditions)
+        
+        # Filtern Sie den DataFrame
+        filtered_df = df.filter(combined_condition)
+    else:
+        filtered_df = df
+    
+    return filtered_df
+
+# Beispielverwendung
+# Angenommen, wir haben einen DataFrame 'df' mit Spalten 'name', 'city', 'job'
+# columns_to_search = ['name', 'city', 'job']
+# create_multi_search_widget(columns_to_search)
+# filtered_df = filter_dataframe_multi(df, columns_to_search)
+# display(filtered_df)
+```
+
+Ich habe das Skript erweitert, um die Suche über mehrere Spalten zu ermöglichen. Hier sind die Hauptänderungen und -funktionen:
+
+1. `create_multi_search_widget(columns)`:
+   - Erstellt ein Multiselect-Widget, mit dem Benutzer auswählen können, in welchen Spalten sie suchen möchten.
+   - Erstellt ein einzelnes Textfeld-Widget für den Suchwert.
+
+2. `filter_dataframe_multi(df, columns)`:
+   - Ermöglicht die Suche in mehreren ausgewählten Spalten.
+   - Verwendet eine OR-Bedingung, um Ergebnisse aus allen ausgewählten Spalten einzubeziehen.
+
+So verwenden Sie dieses aktualisierte Utility in Ihrem Databricks-Notebook:
+
+1. Kopieren Sie den neuen Code in eine Zelle in Ihrem Databricks-Notebook.
+2. Führen Sie die Zelle aus, um die Funktionen zu definieren.
+3. Definieren Sie eine Liste der durchsuchbaren Spalten, z.B.: 
+   `columns_to_search = ['name', 'city', 'job']`
+4. Rufen Sie `create_multi_search_widget(columns_to_search)` auf.
+5. Verwenden Sie `filtered_df = filter_dataframe_multi(df, columns_to_search)`, um den gefilterten DataFrame zu erhalten.
+6. Zeigen Sie den gefilterten DataFrame mit `display(filtered_df)` an.
+
+Diese Version bietet folgende Vorteile:
+
+- Benutzer können mehrere Spalten für die Suche auswählen.
+- Ein einzelner Suchwert wird auf alle ausgewählten Spalten angewendet.
+- Die Suche ist flexibler und kann verschiedene Datentypen in verschiedenen Spalten berücksichtigen.
+
+Möchten Sie, dass ich Ihnen zeige, wie Sie dieses Skript für einen spezifischen DataFrame in Ihrem Projekt anpassen können? Oder haben Sie Fragen zur Verwendung dieser erweiterten Suchfunktion?​​​​​​​​​​​​​​​​
