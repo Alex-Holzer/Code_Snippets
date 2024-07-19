@@ -1,3 +1,5 @@
+```python
+
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
@@ -192,3 +194,7 @@ def collect_values_per_partition(
     result_df = df.select(*agg_expr).distinct()
 
     return result_df
+
+```
+
+
