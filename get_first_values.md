@@ -93,6 +93,11 @@ from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 from typing import List, Union
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from typing import List, Union
+
 def collect_values_per_partition(
     df: DataFrame,
     partition_by_column: str = "_CASE_KEY",
@@ -100,9 +105,10 @@ def collect_values_per_partition(
     order_direction: str = "DESC",
     target_columns: Union[str, List[str]] = None,
     preserve_order: bool = True,
+    delimiter: str = ","
 ) -> DataFrame:
     """
-    Collect values for specified columns for each distinct partition and count the values in each collected column.
+    Collect and combine values for specified columns for each distinct partition and count the values in each collected column.
 
     Args:
         df (DataFrame): Input PySpark DataFrame.
@@ -113,9 +119,10 @@ def collect_values_per_partition(
                                                           If None, all columns except partition_by_column are used.
         preserve_order (bool, optional): If True, use collect_list to preserve order.
                                          If False, use collect_set for unique values. Defaults to True.
+        delimiter (str, optional): Delimiter to use when combining collected values. Defaults to ",".
 
     Returns:
-        DataFrame: DataFrame with distinct partition values, collected values for specified columns,
+        DataFrame: DataFrame with distinct partition values, combined values for specified columns,
                    and count of values for each collected column.
 
     Example:
@@ -125,14 +132,14 @@ def collect_values_per_partition(
         ...     ("case2", "2023-01-01", "value3", "C"),
         ...     ("case2", "2023-01-02", "value4", "C"),
         ... ], ["_CASE_KEY", "EVENTTIME", "Value1", "Value2"])
-        >>> result = collect_values_per_partition(df, target_columns=["Value1", "Value2"], preserve_order=True)
+        >>> result = collect_values_per_partition(df, target_columns=["Value1", "Value2"], preserve_order=True, delimiter=";")
         >>> result.show(truncate=False)
-        +--------+------------------+------------+-------------+-------------+
-        |_CASE_KEY|Value1            |Value2      |Value1_count |Value2_count |
-        +--------+------------------+------------+-------------+-------------+
-        |case1   |[value2, value1]   |[B, A]      |2            |2            |
-        |case2   |[value4, value3]   |[C, C]      |2            |1            |
-        +--------+------------------+------------+-------------+-------------+
+        +--------+---------------+---------+-------------+-------------+
+        |_CASE_KEY|Value1         |Value2   |Value1_count |Value2_count |
+        +--------+---------------+---------+-------------+-------------+
+        |case1   |value2;value1   |B;A      |2            |2            |
+        |case2   |value4;value3   |C;C      |2            |1            |
+        +--------+---------------+---------+-------------+-------------+
     """
     # Input validation
     if not isinstance(df, DataFrame):
@@ -172,11 +179,11 @@ def collect_values_per_partition(
     agg_expr = []
     for col in target_columns:
         if preserve_order:
-            # Use collect_list to preserve order
-            agg_expr.append(F.collect_list(F.col(col)).alias(col))
+            # Use collect_list to preserve order, then join with delimiter
+            agg_expr.append(F.concat_ws(delimiter, F.collect_list(F.col(col))).alias(col))
         else:
-            # Use collect_set for unique values (order not preserved)
-            agg_expr.append(F.collect_set(F.col(col)).alias(col))
+            # Use collect_set for unique values, then join with delimiter
+            agg_expr.append(F.concat_ws(delimiter, F.collect_set(F.col(col))).alias(col))
         
         # Add count column for each target column
         agg_expr.append(F.count(F.col(col)).alias(f"{col}_count"))
@@ -184,8 +191,6 @@ def collect_values_per_partition(
     # Apply the aggregation and ensure distinct partition values
     result_df = df_with_row_num.groupBy(partition_by_column).agg(*agg_expr)
 
-    return result_df
-
-```
+    return result_df```
 
 
