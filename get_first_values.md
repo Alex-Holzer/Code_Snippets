@@ -164,20 +164,21 @@ def collect_values_per_partition(
         F.col(order_by_column).asc() if order_direction.upper() == "ASC" else F.col(order_by_column).desc()
     )
 
+    # Add row numbers within each partition
+    df_with_row_num = df.withColumn("row_num", F.row_number().over(window_spec))
+
     # Prepare the aggregation expressions
     agg_expr = []
     for col in target_columns:
         if preserve_order:
             # Use collect_list to preserve order
-            agg_expr.append(F.collect_list(F.col(col).over(window_spec)).alias(col))
+            agg_expr.append(F.collect_list(F.col(col)).alias(col))
         else:
             # Use collect_set for unique values (order not preserved)
             agg_expr.append(F.collect_set(F.col(col)).alias(col))
 
     # Apply the aggregation and ensure distinct partition values
-    result_df = df.select(F.col(partition_by_column), *agg_expr) \
-                  .groupBy(partition_by_column) \
-                  .agg(*[F.first(col).alias(col) for col in target_columns])
+    result_df = df_with_row_num.groupBy(partition_by_column).agg(*agg_expr)
 
     return result_df
 
