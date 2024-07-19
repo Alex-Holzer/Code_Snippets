@@ -193,17 +193,17 @@ def collect_values_per_partition(
 
     return result_df
 
-
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import input_file_name
 from typing import List, Optional
 
-def read_and_union_csv_files(folder_path: str, recursive: bool = False, file_extension: str = "csv", **kwargs) -> DataFrame:
+def get_combined_csv_dataframe(folder_path: str, recursive: bool = False, file_extension: str = "csv", **kwargs) -> DataFrame:
     """
-    Reads all CSV files from a specified folder in Databricks and combines them into a single DataFrame using unionByName.
+    Retrieves all CSV files from a specified folder in Databricks and combines them into a single DataFrame.
 
     This function is optimized for use in Databricks, utilizing dbutils for file listing and leveraging
-    the pre-existing SparkSession. It's designed to handle large datasets and scale effectively.
+    the pre-existing SparkSession. It retrieves CSV files, combines them using unionByName, and is designed 
+    to handle large datasets efficiently and scalably.
 
     Args:
         folder_path (str): The path to the folder containing CSV files. Can be a Databricks FileStore path or a mounted path.
@@ -220,7 +220,7 @@ def read_and_union_csv_files(folder_path: str, recursive: bool = False, file_ext
 
     Example:
         >>> folder_path = "/mnt/data/csv_files"
-        >>> df = read_and_union_csv_files(folder_path, recursive=True, header=True, inferSchema=True)
+        >>> df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, inferSchema=True)
         >>> df.show()
     """
     # Use dbutils to list files
@@ -249,11 +249,8 @@ def read_and_union_csv_files(folder_path: str, recursive: bool = False, file_ext
     return df
 
 # Example usage
-# df = read_and_union_csv_files("/mnt/data/csv_files", recursive=True, header=True, inferSchema=True)
+# df = get_combined_csv_dataframe("/mnt/data/csv_files", recursive=True, header=True, inferSchema=True)
 # df.show()
-
-
-
 
 
 ```
