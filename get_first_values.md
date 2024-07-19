@@ -81,11 +81,12 @@ def get_first_values_per_partition(
     # Add partition column to select expression
     select_expr.append(F.col(partition_by_column))
 
-    # Apply the window functions and select distinct rows
-    result_df = df.select(*select_expr).distinct()
+    # Apply the window functions and group by partition column to ensure uniqueness
+    result_df = df.select(*select_expr).groupBy(partition_by_column).agg(
+        *[F.first(col).alias(col) for col in target_columns]
+    )
 
     return result_df
-
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
