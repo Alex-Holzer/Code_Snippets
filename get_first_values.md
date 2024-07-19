@@ -253,6 +253,86 @@ def get_combined_csv_dataframe(folder_path: str, recursive: bool = False, file_e
 # df.show()
 
 
+
+from pyspark.sql import DataFrame
+from pyspark.sql.types import StructType, StructField, ArrayType, MapType, StructType as StructType2
+from pyspark.sql.functions import col, lit
+from typing import List, Dict, Any
+
+def enforce_schema(df: DataFrame, schema: StructType) -> DataFrame:
+    """
+    Efficiently enforces a specific schema on a DataFrame, optimized for large datasets.
+
+    This function takes a DataFrame and a StructType schema, then modifies the DataFrame
+    to match the specified schema. It handles type conversions and provides error messages
+    for schema mismatches.
+
+    Args:
+        df (DataFrame): The input DataFrame to modify.
+        schema (StructType): The desired schema to enforce.
+
+    Returns:
+        DataFrame: A new DataFrame with the enforced schema.
+
+    Raises:
+        ValueError: If there are columns in the DataFrame not defined in the schema,
+                    or if required columns are missing from the DataFrame.
+
+    Example:
+        >>> from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+        >>> desired_schema = StructType([
+        ...     StructField("name", StringType(), True),
+        ...     StructField("age", IntegerType(), True)
+        ... ])
+        >>> df = spark.createDataFrame([("Alice", "30")], ["name", "age"])
+        >>> result_df = enforce_schema(df, desired_schema)
+        >>> result_df.printSchema()
+    """
+    # Check for columns in DataFrame not in schema
+    extra_columns: List[str] = [c for c in df.columns if c not in [f.name for f in schema.fields]]
+    if extra_columns:
+        emoji = "❌"
+        error_message = (
+            f"\n{emoji} Error: The following columns are in the DataFrame but not defined in the schema:\n"
+            f"{', '.join(extra_columns)}\n"
+            f"{emoji} Please update your schema to include these columns or remove them from the DataFrame."
+        )
+        raise ValueError(error_message)
+    
+    def cast_column(field: StructField) -> Any:
+        """Efficient helper function to cast columns."""
+        if field.name not in df.columns:
+            if field.nullable:
+                return lit(None).cast(field.dataType).alias(field.name)
+            else:
+                emoji = "❗"
+                error_message = (
+                    f"\n{emoji} Error: Required non-nullable column '{field.name}' is missing from the DataFrame.\n"
+                    f"{emoji} Please ensure all required columns are present in the input data."
+                )
+                raise ValueError(error_message)
+        return col(field.name).cast(field.dataType).alias(field.name)
+
+    # Prepare the list of column expressions for select
+    select_expr: List[Any] = [cast_column(field) for field in schema.fields]
+    
+    # Apply the schema in a single pass
+    return df.select(select_expr)
+
+# Example usage
+# from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+# desired_schema = StructType([
+#     StructField("name", StringType(), True),
+#     StructField("age", IntegerType(), True)
+# ])
+# df = spark.createDataFrame([("Alice", "30")], ["name", "age"])
+# result_df = enforce_schema(df, desired_schema)
+# result_df.printSchema()
+# result_df.show()
+
+
+
+
 ```
 
 
