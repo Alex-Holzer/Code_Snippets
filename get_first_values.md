@@ -191,6 +191,71 @@ def collect_values_per_partition(
     # Apply the aggregation and ensure distinct partition values
     result_df = df_with_row_num.groupBy(partition_by_column).agg(*agg_expr)
 
-    return result_df```
+    return result_df
+
+
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import input_file_name
+from typing import List, Optional
+
+def read_and_union_csv_files(folder_path: str, recursive: bool = False, file_extension: str = "csv", **kwargs) -> DataFrame:
+    """
+    Reads all CSV files from a specified folder in Databricks and combines them into a single DataFrame using unionByName.
+
+    This function is optimized for use in Databricks, utilizing dbutils for file listing and leveraging
+    the pre-existing SparkSession. It's designed to handle large datasets and scale effectively.
+
+    Args:
+        folder_path (str): The path to the folder containing CSV files. Can be a Databricks FileStore path or a mounted path.
+        recursive (bool, optional): If True, searches for files recursively in subfolders. Defaults to False.
+        file_extension (str, optional): The file extension to filter by. Defaults to "csv".
+        **kwargs: Additional keyword arguments to pass to spark.read.csv().
+                  These can include options like 'header', 'inferSchema', 'sep', etc.
+
+    Returns:
+        pyspark.sql.DataFrame: A DataFrame containing the combined data from all CSV files.
+
+    Raises:
+        ValueError: If no files with the specified extension are found in the given path.
+
+    Example:
+        >>> folder_path = "/mnt/data/csv_files"
+        >>> df = read_and_union_csv_files(folder_path, recursive=True, header=True, inferSchema=True)
+        >>> df.show()
+    """
+    # Use dbutils to list files
+    if recursive:
+        files = dbutils.fs.ls(folder_path)
+        csv_files = [f.path for f in files if f.path.endswith(f'.{file_extension}')]
+    else:
+        files = dbutils.fs.ls(folder_path)
+        csv_files = [f.path for f in files if f.name.endswith(f'.{file_extension}')]
+
+    if not csv_files:
+        raise ValueError(f"No .{file_extension} files found in the specified folder: {folder_path}")
+
+    # Read and union all CSV files
+    df = spark.read.csv(csv_files[0], **kwargs)
+    
+    for file in csv_files[1:]:
+        df = df.unionByName(
+            spark.read.csv(file, **kwargs),
+            allowMissingColumns=True
+        )
+
+    # Add a column with the source file name
+    df = df.withColumn("source_file", input_file_name())
+
+    return df
+
+# Example usage
+# df = read_and_union_csv_files("/mnt/data/csv_files", recursive=True, header=True, inferSchema=True)
+# df.show()
+
+
+
+
+
+```
 
 
