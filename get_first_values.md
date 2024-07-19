@@ -5,7 +5,6 @@ from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 from typing import List, Union
 
-
 def get_first_values_per_partition(
     df: DataFrame,
     partition_by_column: str = "_CASE_KEY",
@@ -21,7 +20,7 @@ def get_first_values_per_partition(
         partition_by_column (str, optional): Column to partition by. Defaults to "_CASE_KEY".
         order_by_column (str, optional): Column to order by within each partition. Defaults to "EVENTTIME".
         order_direction (str, optional): Order direction ('ASC' or 'DESC'). Defaults to "DESC".
-        target_columns (Union[str, List[str]], optional): Column(s) to get first values for.
+        target_columns (Union[str, List[str]], optional): Column(s) to get first values for. 
                                                           If None, all columns except partition_by_column are used.
 
     Returns:
@@ -45,16 +44,14 @@ def get_first_values_per_partition(
     # Input validation
     if not isinstance(df, DataFrame):
         raise ValueError("Input must be a PySpark DataFrame")
-
+    
     if order_direction.upper() not in ["ASC", "DESC"]:
         raise ValueError("order_direction must be either 'ASC' or 'DESC'")
-
+    
     # Ensure all specified columns exist in the DataFrame
     all_columns = set(df.columns)
     if partition_by_column not in all_columns:
-        raise ValueError(
-            f"Partition column '{partition_by_column}' not found in DataFrame"
-        )
+        raise ValueError(f"Partition column '{partition_by_column}' not found in DataFrame")
     if order_by_column not in all_columns:
         raise ValueError(f"Order by column '{order_by_column}' not found in DataFrame")
 
@@ -68,20 +65,16 @@ def get_first_values_per_partition(
 
     missing_columns = set(target_columns) - all_columns
     if missing_columns:
-        raise ValueError(
-            f"The following columns are not present in the DataFrame: {missing_columns}"
-        )
+        raise ValueError(f"The following columns are not present in the DataFrame: {missing_columns}")
 
     # Create window specification
     window_spec = Window.partitionBy(partition_by_column).orderBy(
-        F.col(order_by_column).asc()
-        if order_direction.upper() == "ASC"
-        else F.col(order_by_column).desc()
+        F.col(order_by_column).asc() if order_direction.upper() == "ASC" else F.col(order_by_column).desc()
     )
 
     # Select first non-null values for each column
     select_expr = [
-        F.first(F.col(col), ignorenulls=True).over(window_spec).alias(col)
+        F.first(col, ignorenulls=True).over(window_spec).alias(col)
         for col in target_columns
     ]
 
@@ -92,7 +85,6 @@ def get_first_values_per_partition(
     result_df = df.select(*select_expr).distinct()
 
     return result_df
-
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
