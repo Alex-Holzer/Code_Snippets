@@ -87,11 +87,11 @@ def get_first_values_per_partition(
     )
 
     return result_df
+
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 from typing import List, Union
-
 
 def collect_values_per_partition(
     df: DataFrame,
@@ -143,9 +143,7 @@ def collect_values_per_partition(
     # Ensure all specified columns exist in the DataFrame
     all_columns = set(df.columns)
     if partition_by_column not in all_columns:
-        raise ValueError(
-            f"Partition column '{partition_by_column}' not found in DataFrame"
-        )
+        raise ValueError(f"Partition column '{partition_by_column}' not found in DataFrame")
     if order_by_column not in all_columns:
         raise ValueError(f"Order by column '{order_by_column}' not found in DataFrame")
 
@@ -159,15 +157,11 @@ def collect_values_per_partition(
 
     missing_columns = set(target_columns) - all_columns
     if missing_columns:
-        raise ValueError(
-            f"The following columns are not present in the DataFrame: {missing_columns}"
-        )
+        raise ValueError(f"The following columns are not present in the DataFrame: {missing_columns}")
 
-    # Create window specification for ordering (if needed)
+    # Create window specification for ordering
     window_spec = Window.partitionBy(partition_by_column).orderBy(
-        F.col(order_by_column).asc()
-        if order_direction.upper() == "ASC"
-        else F.col(order_by_column).desc()
+        F.col(order_by_column).asc() if order_direction.upper() == "ASC" else F.col(order_by_column).desc()
     )
 
     # Prepare the aggregation expressions
@@ -180,11 +174,10 @@ def collect_values_per_partition(
             # Use collect_set for unique values (order not preserved)
             agg_expr.append(F.collect_set(F.col(col)).alias(col))
 
-    # Add partition column to aggregation expression
-    agg_expr.append(F.col(partition_by_column))
-
-    # Apply the aggregation
-    result_df = df.select(*agg_expr).distinct()
+    # Apply the aggregation and ensure distinct partition values
+    result_df = df.select(F.col(partition_by_column), *agg_expr) \
+                  .groupBy(partition_by_column) \
+                  .agg(*[F.first(col).alias(col) for col in target_columns])
 
     return result_df
 
