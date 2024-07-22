@@ -404,8 +404,147 @@ def enforce_schema(df: DataFrame, schema: StructType) -> DataFrame:
 # result_df.show()
 
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import List, Dict, Any
+import logging
+
+def transform(self, f, *args, **kwargs):
+    return f(self, *args, **kwargs)
+
+DataFrame.transform = transform
+
+def list_csv_files(folder_path: str, recursive: bool, file_extension: str) -> List[str]:
+    """
+    List all CSV files in the specified folder using dbutils.
+    
+    Args:
+        folder_path (str): Path to the folder containing CSV files.
+        recursive (bool): Whether to search recursively.
+        file_extension (str): File extension to filter by.
+    
+    Returns:
+        List[str]: List of CSV file paths.
+    
+    Raises:
+        ValueError: If no matching files are found.
+    """
+    try:
+        if recursive:
+            files = dbutils.fs.ls(folder_path)
+            csv_files = [f.path for f in files if f.path.endswith(f'.{file_extension}')]
+        else:
+            files = dbutils.fs.ls(folder_path)
+            csv_files = [f.path for f in files if f.name.endswith(f'.{file_extension}')]
+        
+        if not csv_files:
+            raise ValueError(f"No .{file_extension} files found in the specified folder: {folder_path}")
+        
+        return csv_files
+    except Exception as e:
+        logging.error(f"Error listing CSV files: {str(e)}")
+        raise
+
+def read_csv_file(file_path: str, options: Dict[str, Any]) -> DataFrame:
+    """
+    Read a single CSV file into a DataFrame.
+    
+    Args:
+        file_path (str): Path to the CSV file.
+        options (Dict[str, Any]): Options for reading CSV.
+    
+    Returns:
+        DataFrame: The read DataFrame.
+    """
+    return spark.read.options(**options).csv(file_path)
+
+def add_source_file_column(df: DataFrame) -> DataFrame:
+    """
+    Add a column with just the source file name (not the full path).
+    
+    Args:
+        df (DataFrame): Input DataFrame.
+    
+    Returns:
+        DataFrame: DataFrame with added source_file column containing only the file name.
+    """
+    return df.withColumn("source_file", F.element_at(F.split(F.input_file_name(), "/"), -1))
+
+def get_combined_csv_dataframe(
+    folder_path: str,
+    recursive: bool = False,
+    file_extension: str = "csv",
+    **kwargs
+) -> DataFrame:
+    """
+    Retrieve and combine CSV files from a specified folder into a single DataFrame in Databricks.
+
+    This function is optimized for use in Databricks, utilizing dbutils for file listing and the
+    pre-existing SparkSession. It retrieves CSV files, combines them using unionByName, and is designed 
+    to handle large datasets efficiently and scalably. By default, it uses UTF-8 encoding for reading files.
+    The resulting DataFrame includes all original columns from the CSV files plus an additional 'source_file'
+    column containing the name of the source file (without the full path).
+
+    Args:
+        folder_path (str): The path to the folder containing CSV files. Can be a Databricks FileStore path or a mounted path.
+        recursive (bool, optional): If True, searches for files recursively in subfolders. Defaults to False.
+        file_extension (str, optional): The file extension to filter by. Defaults to "csv".
+        **kwargs: Additional keyword arguments to pass to spark.read.csv().
+                  These can include options like 'header', 'inferSchema', etc.
+
+    Returns:
+        pyspark.sql.DataFrame: A DataFrame containing the combined data from all CSV files, 
+                               with an additional 'source_file' column.
+
+    Raises:
+        ValueError: If no files with the specified extension are found in the given path.
+
+    Example:
+        >>> folder_path = "/mnt/data/csv_files"
+        >>> df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, inferSchema=True)
+        >>> df.show()
+    """
+    logging.info(f"Reading CSV files from: {folder_path}")
+    
+    # Set default options
+    options = {
+        "sep": ";",
+        "header": "true",
+        "ignoreLeadingWhiteSpace": "true",
+        "ignoreTrailingWhiteSpace": "true",
+        "encoding": "UTF-8"
+    }
+    options.update(kwargs)
+    
+    try:
+        csv_files = list_csv_files(folder_path, recursive, file_extension)
+        
+        # Read and union all CSV files
+        df = read_csv_file(csv_files[0], options)
+        
+        for file in csv_files[1:]:
+            df = df.unionByName(
+                read_csv_file(file, options),
+                allowMissingColumns=True
+            )
+        
+        return df.transform(add_source_file_column)
+    
+    except Exception as e:
+        logging.error(f"Error in get_combined_csv_dataframe: {str(e)}")
+        raise
+
+# Example usage
+# folder_path = "/mnt/data/csv_files"
+# df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, inferSchema=True)
+# df.show()
+
+
 
 
 ```
+
+
+
 
 
