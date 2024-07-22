@@ -270,7 +270,7 @@ def get_combined_csv_dataframe(
 
     This function is optimized for use in Databricks, utilizing dbutils for file listing and the
     pre-existing SparkSession. It retrieves CSV files, combines them using unionByName, and is designed 
-    to handle large datasets efficiently and scalably.
+    to handle large datasets efficiently and scalably. By default, it uses UTF-8 encoding for reading files.
 
     Args:
         folder_path (str): The path to the folder containing CSV files. Can be a Databricks FileStore path or a mounted path.
@@ -297,7 +297,8 @@ def get_combined_csv_dataframe(
         "sep": ";",
         "header": "true",
         "ignoreLeadingWhiteSpace": "true",
-        "ignoreTrailingWhiteSpace": "true"
+        "ignoreTrailingWhiteSpace": "true",
+        "encoding": "UTF-8"  # Added UTF-8 encoding as default
     }
     options.update(kwargs)
     
@@ -323,8 +324,6 @@ def get_combined_csv_dataframe(
 # folder_path = "/mnt/data/csv_files"
 # df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, inferSchema=True)
 # df.show()
-
-
 
 from pyspark.sql import DataFrame
 from pyspark.sql.types import StructType, StructField, ArrayType, MapType, StructType as StructType2
