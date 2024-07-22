@@ -36,23 +36,18 @@ def list_csv_files(folder_path: str, recursive: bool, file_extension: str) -> Li
         logging.error(f"Error listing CSV files: {str(e)}")
         raise
 
-def read_csv_file(file_path: str, options: Dict[str, Any], columns: Optional[List[str]] = None) -> DataFrame:
+def read_csv_file(file_path: str, options: Dict[str, Any]) -> DataFrame:
     """
-    Read a single CSV file into a DataFrame, select specific columns if provided, and add the file name as a column.
+    Read a single CSV file into a DataFrame and add the file name as a column.
     
     Args:
         file_path (str): Path to the CSV file.
         options (Dict[str, Any]): Options for reading CSV.
-        columns (Optional[List[str]]): List of columns to select. If None, all columns are selected.
     
     Returns:
-        DataFrame: The read DataFrame with selected columns and an additional 'source_file' column.
+        DataFrame: The read DataFrame with an additional 'source_file' column.
     """
     df = spark.read.options(**options).csv(file_path)
-    
-    if columns:
-        df = df.select(*columns)
-    
     file_name = os.path.basename(file_path)
     return df.withColumn("source_file", F.lit(file_name))
 
@@ -106,12 +101,18 @@ def get_combined_csv_dataframe(
         csv_files = list_csv_files(folder_path, recursive, file_extension)
         
         # Read all CSV files individually
-        dataframes = [read_csv_file(file, options, columns) for file in csv_files]
+        dataframes = [read_csv_file(file, options) for file in csv_files]
         
         # Combine all DataFrames using unionByName
         combined_df = dataframes[0]
         for df in dataframes[1:]:
             combined_df = combined_df.unionByName(df, allowMissingColumns=True)
+        
+        # Select specified columns if provided
+        if columns:
+            if 'source_file' not in columns:
+                columns.append('source_file')
+            combined_df = combined_df.select(*columns)
         
         return combined_df
     
@@ -123,6 +124,4 @@ def get_combined_csv_dataframe(
 # folder_path = "/mnt/data/csv_files"
 # columns = ["id", "name", "value"]
 # df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, columns=columns)
-# df.show()
-
-```
+# df.show()```
