@@ -214,4 +214,60 @@ def example_function():
 result = example_function()
 print(result)
 
+
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import Dict, Any
+
+def replace_values_with_dict(df: DataFrame, column: str, replacement_dict: Dict[Any, Any]) -> DataFrame:
+    """
+    Replace values in a specified column of a DataFrame according to a dictionary.
+    If a value is not in the dictionary, it will be replaced with None.
+
+    Args:
+        df (DataFrame): The input DataFrame.
+        column (str): The name of the column to modify.
+        replacement_dict (Dict[Any, Any]): A dictionary mapping original values to new values.
+
+    Returns:
+        DataFrame: A new DataFrame with the specified column's values replaced.
+
+    Example:
+        >>> df = spark.createDataFrame([('A',), ('B',), ('C',)], ['letter'])
+        >>> replacement_dict = {'A': 1, 'B': 2}
+        >>> result_df = replace_values_with_dict(df, 'letter', replacement_dict)
+        >>> result_df.show()
+        +------+
+        |letter|
+        +------+
+        |     1|
+        |     2|
+        |  null|
+        +------+
+    """
+    # Create a list of when-otherwise conditions
+    conditions = [F.when(F.col(column) == F.lit(k), F.lit(v)) for k, v in replacement_dict.items()]
+    
+    # Add a final otherwise condition to set values not in the dict to None
+    otherwise = F.when(F.lit(True), F.lit(None))
+    
+    # Apply the replacement using a single withColumn operation
+    return df.withColumn(column, F.coalesce(*conditions, otherwise))
+
+# Example usage
+if __name__ == "__main__":
+    # Create a sample DataFrame
+    data = [('A',), ('B',), ('C',), ('D',)]
+    df = spark.createDataFrame(data, ['letter'])
+
+    # Define a replacement dictionary
+    replacement_dict = {'A': 1, 'B': 2, 'C': 3}
+
+    # Apply the replacement
+    result_df = replace_values_with_dict(df, 'letter', replacement_dict)
+
+    # Show the result
+    result_df.show()
+
+
 ```
