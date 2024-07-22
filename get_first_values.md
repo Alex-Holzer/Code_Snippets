@@ -424,6 +424,17 @@ def transform(self, f, *args, **kwargs):
 
 DataFrame.transform = transform
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import List, Dict, Any
+import logging
+import os
+
+def transform(self, f, *args, **kwargs):
+    return f(self, *args, **kwargs)
+
+DataFrame.transform = transform
+
 def list_csv_files(folder_path: str, recursive: bool, file_extension: str) -> List[str]:
     """
     List all CSV files in the specified folder using dbutils.
@@ -457,17 +468,18 @@ def list_csv_files(folder_path: str, recursive: bool, file_extension: str) -> Li
 
 def read_csv_file(file_path: str, options: Dict[str, Any]) -> DataFrame:
     """
-    Read a single CSV file into a DataFrame.
+    Read a single CSV file into a DataFrame and add the file name as a column.
     
     Args:
         file_path (str): Path to the CSV file.
         options (Dict[str, Any]): Options for reading CSV.
     
     Returns:
-        DataFrame: The read DataFrame.
+        DataFrame: The read DataFrame with an additional 'source_file' column.
     """
     df = spark.read.options(**options).csv(file_path)
-    return df.withColumn("source_file", F.lit(file_path.split("/")[-1]))
+    file_name = os.path.basename(file_path)
+    return df.withColumn("source_file", F.lit(file_name))
 
 def get_combined_csv_dataframe(
     folder_path: str,
@@ -480,9 +492,9 @@ def get_combined_csv_dataframe(
 
     This function is optimized for use in Databricks, utilizing dbutils for file listing and the
     pre-existing SparkSession. It retrieves CSV files, combines them using unionByName, and is designed 
-    to handle large datasets efficiently and scalably. By default, it uses UTF-8 encoding for reading files.
-    The resulting DataFrame includes all original columns from the CSV files plus an additional 'source_file'
-    column containing the name of the source file (without the full path).
+    to handle large datasets efficiently and scalably. By default, it uses UTF-8 encoding and semicolon 
+    as separator for reading files. The resulting DataFrame includes all original columns from the CSV files 
+    plus an additional 'source_file' column containing only the file name of the source CSV.
 
     Args:
         folder_path (str): The path to the folder containing CSV files. Can be a Databricks FileStore path or a mounted path.
@@ -493,14 +505,14 @@ def get_combined_csv_dataframe(
 
     Returns:
         pyspark.sql.DataFrame: A DataFrame containing the combined data from all CSV files, 
-                               with an additional 'source_file' column.
+                               with an additional 'source_file' column containing only the file name.
 
     Raises:
         ValueError: If no files with the specified extension are found in the given path.
 
     Example:
         >>> folder_path = "/mnt/data/csv_files"
-        >>> df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, inferSchema=True)
+        >>> df = get_combined_csv_dataframe(folder_path, recursive=True, header=True)
         >>> df.show()
     """
     logging.info(f"Reading CSV files from: {folder_path}")
@@ -509,7 +521,6 @@ def get_combined_csv_dataframe(
     options = {
         "sep": ";",
         "header": "true",
-        "inferSchema": "true",
         "ignoreLeadingWhiteSpace": "true",
         "ignoreTrailingWhiteSpace": "true",
         "encoding": "UTF-8"
@@ -536,10 +547,8 @@ def get_combined_csv_dataframe(
 
 # Example usage
 # folder_path = "/mnt/data/csv_files"
-# df = get_combined_csv_dataframe(folder_path, recursive=True)
+# df = get_combined_csv_dataframe(folder_path, recursive=True, header=True)
 # df.show()
-
-
 
 ```
 
