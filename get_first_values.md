@@ -249,15 +249,15 @@ def read_csv_file(file_path: str, options: Dict[str, Any]) -> DataFrame:
 
 def add_source_file_column(df: DataFrame) -> DataFrame:
     """
-    Add a column with the source file name.
+    Add a column with just the source file name (not the full path).
     
     Args:
         df (DataFrame): Input DataFrame.
     
     Returns:
-        DataFrame: DataFrame with added source_file column.
+        DataFrame: DataFrame with added source_file column containing only the file name.
     """
-    return df.withColumn("source_file", F.input_file_name())
+    return df.withColumn("source_file", F.element_at(F.split(F.input_file_name(), "/"), -1))
 
 def get_combined_csv_dataframe(
     folder_path: str,
@@ -271,6 +271,8 @@ def get_combined_csv_dataframe(
     This function is optimized for use in Databricks, utilizing dbutils for file listing and the
     pre-existing SparkSession. It retrieves CSV files, combines them using unionByName, and is designed 
     to handle large datasets efficiently and scalably. By default, it uses UTF-8 encoding for reading files.
+    The resulting DataFrame includes all original columns from the CSV files plus an additional 'source_file'
+    column containing the name of the source file (without the full path).
 
     Args:
         folder_path (str): The path to the folder containing CSV files. Can be a Databricks FileStore path or a mounted path.
@@ -280,7 +282,8 @@ def get_combined_csv_dataframe(
                   These can include options like 'header', 'inferSchema', etc.
 
     Returns:
-        pyspark.sql.DataFrame: A DataFrame containing the combined data from all CSV files.
+        pyspark.sql.DataFrame: A DataFrame containing the combined data from all CSV files, 
+                               with an additional 'source_file' column.
 
     Raises:
         ValueError: If no files with the specified extension are found in the given path.
@@ -298,7 +301,7 @@ def get_combined_csv_dataframe(
         "header": "true",
         "ignoreLeadingWhiteSpace": "true",
         "ignoreTrailingWhiteSpace": "true",
-        "encoding": "UTF-8"  # Added UTF-8 encoding as default
+        "encoding": "UTF-8"
     }
     options.update(kwargs)
     
@@ -324,7 +327,6 @@ def get_combined_csv_dataframe(
 # folder_path = "/mnt/data/csv_files"
 # df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, inferSchema=True)
 # df.show()
-
 from pyspark.sql import DataFrame
 from pyspark.sql.types import StructType, StructField, ArrayType, MapType, StructType as StructType2
 from pyspark.sql.functions import col, lit
