@@ -435,6 +435,12 @@ def transform(self, f, *args, **kwargs):
 
 DataFrame.transform = transform
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import List, Dict, Any
+import logging
+import os
+
 def list_csv_files(folder_path: str, recursive: bool, file_extension: str) -> List[str]:
     """
     List all CSV files in the specified folder using dbutils.
@@ -492,16 +498,13 @@ def get_combined_csv_dataframe(
 
     This function is optimized for use in Databricks, utilizing dbutils for file listing and the
     pre-existing SparkSession. It retrieves CSV files, combines them using unionByName, and is designed 
-    to handle large datasets efficiently and scalably. By default, it uses UTF-8 encoding and semicolon 
-    as separator for reading files. The resulting DataFrame includes all original columns from the CSV files 
-    plus an additional 'source_file' column containing only the file name of the source CSV.
+    to handle large datasets efficiently and scalably.
 
     Args:
-        folder_path (str): The path to the folder containing CSV files. Can be a Databricks FileStore path or a mounted path.
+        folder_path (str): The path to the folder containing CSV files.
         recursive (bool, optional): If True, searches for files recursively in subfolders. Defaults to False.
         file_extension (str, optional): The file extension to filter by. Defaults to "csv".
         **kwargs: Additional keyword arguments to pass to spark.read.csv().
-                  These can include options like 'header', 'inferSchema', etc.
 
     Returns:
         pyspark.sql.DataFrame: A DataFrame containing the combined data from all CSV files, 
@@ -530,16 +533,15 @@ def get_combined_csv_dataframe(
     try:
         csv_files = list_csv_files(folder_path, recursive, file_extension)
         
-        # Read and union all CSV files
-        df = read_csv_file(csv_files[0], options)
+        # Read all CSV files individually
+        dataframes = [read_csv_file(file, options) for file in csv_files]
         
-        for file in csv_files[1:]:
-            df = df.unionByName(
-                read_csv_file(file, options),
-                allowMissingColumns=True
-            )
+        # Combine all DataFrames using unionByName
+        combined_df = dataframes[0]
+        for df in dataframes[1:]:
+            combined_df = combined_df.unionByName(df, allowMissingColumns=True)
         
-        return df
+        return combined_df
     
     except Exception as e:
         logging.error(f"Error in get_combined_csv_dataframe: {str(e)}")
