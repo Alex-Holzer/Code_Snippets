@@ -59,5 +59,90 @@ if __name__ == "__main__":
     # Show the result
     result_df.show()
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import List, Union
+
+def validate_input(df: DataFrame, columns: Union[str, List[str]], from_sep: str, to_sep: str) -> None:
+    """
+    Validate input parameters for the replace_decimal_separator function.
+    
+    Args:
+        df (DataFrame): Input DataFrame.
+        columns (Union[str, List[str]]): Column(s) to process.
+        from_sep (str): Current decimal separator.
+        to_sep (str): New decimal separator.
+    
+    Raises:
+        ValueError: If input parameters are invalid.
+    """
+    if not isinstance(df, DataFrame):
+        raise ValueError("Input must be a PySpark DataFrame.")
+    
+    if isinstance(columns, str):
+        columns = [columns]
+    elif not isinstance(columns, list) or not all(isinstance(col, str) for col in columns):
+        raise ValueError("Columns must be a string or a list of strings.")
+    
+    if not set(columns).issubset(df.columns):
+        raise ValueError("Specified columns not found in the DataFrame.")
+    
+    if from_sep not in {',', '.'} or to_sep not in {',', '.'} or from_sep == to_sep:
+        raise ValueError("Invalid separator values. Use ',' or '.' and ensure they are different.")
+
+def replace_in_column(column: str, from_sep: str, to_sep: str) -> F.Column:
+    """
+    Create a column expression to replace the decimal separator in a single column.
+    
+    Args:
+        column (str): Name of the column to process.
+        from_sep (str): Current decimal separator.
+        to_sep (str): New decimal separator.
+    
+    Returns:
+        F.Column: Transformed column expression.
+    """
+    return F.regexp_replace(F.col(column), f"\\{from_sep}", to_sep).alias(column)
+
+def replace_decimal_separator(df: DataFrame, columns: Union[str, List[str]], from_sep: str = ',', to_sep: str = '.') -> DataFrame:
+    """
+    Replace decimal separator in specified columns of a DataFrame.
+    
+    Args:
+        df (DataFrame): Input DataFrame.
+        columns (Union[str, List[str]]): Column(s) to process.
+        from_sep (str, optional): Current decimal separator. Defaults to ','.
+        to_sep (str, optional): New decimal separator. Defaults to '.'.
+    
+    Returns:
+        DataFrame: Transformed DataFrame with updated decimal separators.
+    """
+    validate_input(df, columns, from_sep, to_sep)
+    
+    if isinstance(columns, str):
+        columns = [columns]
+    
+    def transform_columns(df: DataFrame) -> DataFrame:
+        select_expr = [
+            replace_in_column(col, from_sep, to_sep) if col in columns else F.col(col)
+            for col in df.columns
+        ]
+        return df.select(*select_expr)
+    
+    return df.transform(transform_columns)
+
+# Example usage
+def example_usage(spark):
+    # Create a sample DataFrame
+    data = [("1,5", "2.7"), ("3,14", "4,2")]
+    df = spark.createDataFrame(data, ["col1", "col2"])
+    
+    # Apply the transformation
+    df_transformed = replace_decimal_separator(df, ["col1", "col2"], from_sep=",", to_sep=".")
+    
+    df_transformed.show()
+
+# Note: The example_usage function is just for demonstration and should be removed in production code.
+
 
 ```
