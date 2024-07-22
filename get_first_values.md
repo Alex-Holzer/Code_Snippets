@@ -414,6 +414,16 @@ def transform(self, f, *args, **kwargs):
 
 DataFrame.transform = transform
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import List, Dict, Any
+import logging
+
+def transform(self, f, *args, **kwargs):
+    return f(self, *args, **kwargs)
+
+DataFrame.transform = transform
+
 def list_csv_files(folder_path: str, recursive: bool, file_extension: str) -> List[str]:
     """
     List all CSV files in the specified folder using dbutils.
@@ -456,19 +466,8 @@ def read_csv_file(file_path: str, options: Dict[str, Any]) -> DataFrame:
     Returns:
         DataFrame: The read DataFrame.
     """
-    return spark.read.options(**options).csv(file_path)
-
-def add_source_file_column(df: DataFrame) -> DataFrame:
-    """
-    Add a column with just the source file name (not the full path).
-    
-    Args:
-        df (DataFrame): Input DataFrame.
-    
-    Returns:
-        DataFrame: DataFrame with added source_file column containing only the file name.
-    """
-    return df.withColumn("source_file", F.element_at(F.split(F.input_file_name(), "/"), -1))
+    df = spark.read.options(**options).csv(file_path)
+    return df.withColumn("source_file", F.lit(file_path.split("/")[-1]))
 
 def get_combined_csv_dataframe(
     folder_path: str,
@@ -510,6 +509,7 @@ def get_combined_csv_dataframe(
     options = {
         "sep": ";",
         "header": "true",
+        "inferSchema": "true",
         "ignoreLeadingWhiteSpace": "true",
         "ignoreTrailingWhiteSpace": "true",
         "encoding": "UTF-8"
@@ -528,7 +528,7 @@ def get_combined_csv_dataframe(
                 allowMissingColumns=True
             )
         
-        return df.transform(add_source_file_column)
+        return df
     
     except Exception as e:
         logging.error(f"Error in get_combined_csv_dataframe: {str(e)}")
@@ -536,9 +536,8 @@ def get_combined_csv_dataframe(
 
 # Example usage
 # folder_path = "/mnt/data/csv_files"
-# df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, inferSchema=True)
+# df = get_combined_csv_dataframe(folder_path, recursive=True)
 # df.show()
-
 
 
 
