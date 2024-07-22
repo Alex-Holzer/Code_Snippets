@@ -125,4 +125,93 @@ def get_combined_csv_dataframe(
 # df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, columns=columns)
 # df.show()
 
+
+import time
+import logging
+from functools import wraps
+from typing import Callable, Any, Optional
+
+def execution_timer(func: Optional[Callable] = None, *, log_level: str = "INFO", display: bool = True):
+    """
+    A decorator to measure and log the execution time of a function or a notebook cell.
+    
+    This can be used as a decorator for functions or as a context manager for notebook cells.
+    
+    Args:
+        func (Optional[Callable]): The function to be wrapped. If None, can be used as a context manager.
+        log_level (str): The logging level to use. Defaults to "INFO".
+        display (bool): Whether to display the execution time. Defaults to True.
+    
+    Returns:
+        Callable: The wrapped function that measures execution time.
+    
+    Example usage as a decorator:
+        @execution_timer(log_level="DEBUG", display=True)
+        def my_function():
+            # Function code here
+    
+    Example usage in a notebook cell:
+        with execution_timer(log_level="INFO", display=True):
+            # Cell code here
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            execution_time = end_time - start_time
+            
+            log_message = f"Execution time of {func.__name__}: {execution_time:.4f} seconds"
+            getattr(logging, log_level.lower())(log_message)
+            
+            if display:
+                print(log_message)
+            
+            return result
+        return wrapper
+    
+    # This allows the decorator to be used with or without arguments
+    if func is None:
+        return decorator
+    else:
+        return decorator(func)
+
+# Example usage as a context manager for notebook cells
+class TimerContextManager:
+    def __init__(self, log_level="INFO", display=True):
+        self.log_level = log_level
+        self.display = display
+    
+    def __enter__(self):
+        self.start_time = time.time()
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        end_time = time.time()
+        execution_time = end_time - self.start_time
+        
+        log_message = f"Cell execution time: {execution_time:.4f} seconds"
+        getattr(logging, self.log_level.lower())(log_message)
+        
+        if self.display:
+            print(log_message)
+
+# Make the context manager available through the execution_timer name
+execution_timer.cell = TimerContextManager
+
+# Example usage for a function
+@execution_timer(log_level="DEBUG", display=True)
+def example_function():
+    time.sleep(2)  # Simulate some work
+    return "Function completed"
+
+# Example usage for a notebook cell
+# with execution_timer.cell(log_level="INFO", display=True):
+#     time.sleep(3)  # Simulate some work
+#     print("Cell code completed")
+
+# Run the example function
+result = example_function()
+print(result)
+
 ```
