@@ -1,5 +1,4 @@
-```python
-
+```
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from typing import List, Dict, Any, Optional
@@ -39,7 +38,7 @@ def list_csv_files(folder_path: str, recursive: bool, file_extension: str) -> Li
 
 def read_csv_file(file_path: str, options: Dict[str, Any], columns: Optional[List[str]] = None) -> DataFrame:
     """
-    Read a single CSV file into a DataFrame and add the file name as a column.
+    Read a single CSV file into a DataFrame, select specific columns if provided, and add the file name as a column.
     
     Args:
         file_path (str): Path to the CSV file.
@@ -47,17 +46,14 @@ def read_csv_file(file_path: str, options: Dict[str, Any], columns: Optional[Lis
         columns (Optional[List[str]]): List of columns to select. If None, all columns are selected.
     
     Returns:
-        DataFrame: The read DataFrame with an additional 'source_file' column.
+        DataFrame: The read DataFrame with selected columns and an additional 'source_file' column.
     """
     df = spark.read.options(**options).csv(file_path)
-    file_name = os.path.basename(file_path)
     
     if columns:
-        # Ensure 'source_file' is included in the columns list
-        if 'source_file' not in columns:
-            columns.append('source_file')
         df = df.select(*columns)
     
+    file_name = os.path.basename(file_path)
     return df.withColumn("source_file", F.lit(file_name))
 
 def get_combined_csv_dataframe(
@@ -122,11 +118,10 @@ def get_combined_csv_dataframe(
     except Exception as e:
         logging.error(f"Error in get_combined_csv_dataframe: {str(e)}")
         raise
+```
 
 # Example usage
 # folder_path = "/mnt/data/csv_files"
 # columns = ["id", "name", "value"]
 # df = get_combined_csv_dataframe(folder_path, recursive=True, header=True, columns=columns)
 # df.show()
-
-```
