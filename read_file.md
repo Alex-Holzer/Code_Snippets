@@ -147,7 +147,7 @@ def example_usage():
 --- replace string----
 
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import regexp_replace, lower
+from pyspark.sql.functions import regexp_replace, lower, upper, col
 from typing import Union, List
 
 def replace_string_in_columns(
@@ -158,7 +158,7 @@ def replace_string_in_columns(
     case_sensitive: bool = True
 ) -> DataFrame:
     """
-    Perform a configurable case-sensitive find-and-replace operation on specified columns of a DataFrame.
+    Perform a configurable case-sensitive or case-insensitive find-and-replace operation on specified columns of a DataFrame.
 
     This function replaces all occurrences of 'find_string' with 'replace_string' in the specified
     column(s) of the input DataFrame. The operation can be case-sensitive or case-insensitive.
@@ -223,15 +223,11 @@ def replace_string_in_columns(
     # Apply the replacement to each specified column
     for column in columns:
         if case_sensitive:
-            df = df.withColumn(column, regexp_replace(df[column], escaped_find_string, replace_string))
+            df = df.withColumn(column, regexp_replace(col(column), escaped_find_string, replace_string))
         else:
-            df = df.withColumn(column, 
-                regexp_replace(
-                    lower(df[column]), 
-                    lower(escaped_find_string), 
-                    replace_string
-                ).alias(column)
-            )
+            # For case-insensitive, we use a regex that matches both upper and lower case
+            case_insensitive_regex = ''.join(f'[{c.lower()}{c.upper()}]' for c in escaped_find_string)
+            df = df.withColumn(column, regexp_replace(col(column), case_insensitive_regex, replace_string))
     
     return df
 
@@ -258,8 +254,6 @@ def example_usage():
 
 # Uncomment the following line to run the example in Databricks
 # example_usage()
-
-
 
 
 
