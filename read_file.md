@@ -395,7 +395,7 @@ def create_mapping_conditions(mapping_dict: Dict[str, Any], source_column: str):
         list: A list of tuples, each containing a condition and its corresponding value.
     """
     return [
-        (F.col(source_column).like(key) if '%' in key else F.col(source_column) == key, F.lit(value))
+        (F.col(source_column).like(key) if '%' in key else F.col(source_column) == key, value)
         for key, value in mapping_dict.items()
     ]
 
@@ -440,19 +440,18 @@ def add_mapped_column(
     """
     conditions = create_mapping_conditions(mapping_dict, source_column)
     
-    mapping_expr = conditions[0][1]
+    # Build the CASE WHEN expression
+    case_expr = F.when(conditions[0][0], F.lit(conditions[0][1]))
     for condition, value in conditions[1:]:
-        mapping_expr = F.when(condition, value).otherwise(mapping_expr)
+        case_expr = case_expr.when(condition, F.lit(value))
     
-    # Handle the case where 'otherwise' is a column
+    # Handle the 'otherwise' case
     if isinstance(otherwise, Column):
-        final_expr = F.when(F.expr(' OR '.join([c[0].cast('string') for c in conditions])), mapping_expr).otherwise(otherwise)
+        final_expr = case_expr.otherwise(otherwise)
     else:
-        final_expr = F.when(F.expr(' OR '.join([c[0].cast('string') for c in conditions])), mapping_expr).otherwise(F.lit(otherwise))
+        final_expr = case_expr.otherwise(F.lit(otherwise))
     
     return df.withColumn(target_column, final_expr)
-
-
 
 
 from pyspark.sql import SparkSession
