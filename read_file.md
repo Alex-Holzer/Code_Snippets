@@ -23,10 +23,14 @@ def measure_execution_time(func):
 
 ----------------------------- Data set
 
-from pyspark.sql.functions import rand, randn, lit, expr, concat, col
+from pyspark.sql.functions import rand, randn, lit, expr, concat, col, udf
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, BooleanType, TimestampType
 import string
 import random
+
+@udf(returnType=StringType())
+def random_string(length):
+    return ''.join(random.choices(string.ascii_lowercase, k=length))
 
 def generate_large_dataset(num_rows=100_000_000):
     # Define schema
@@ -45,7 +49,7 @@ def generate_large_dataset(num_rows=100_000_000):
     # Add columns
     df = df.withColumn("name", concat(
         lit(random.choice(string.ascii_uppercase)),
-        expr("substring(md5(rand()), 1, 9)")  # Generate random string
+        random_string(lit(9))
     ))
     df = df.withColumn("age", (rand() * 80 + 18).cast(IntegerType()))
     df = df.withColumn("salary", (randn() * 20000 + 50000).cast(DoubleType()))
@@ -63,4 +67,6 @@ large_df = generate_large_dataset()
 print(f"Generated DataFrame with {large_df.count()} rows and {len(large_df.columns)} columns")
 display(large_df.limit(5))  # Using display() instead of show() in Databricks
 large_df.printSchema()
+
+
 ```
