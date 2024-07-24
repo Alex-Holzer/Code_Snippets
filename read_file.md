@@ -68,5 +68,77 @@ print(f"Generated DataFrame with {large_df.count()} rows and {len(large_df.colum
 display(large_df.limit(5))  # Using display() instead of show() in Databricks
 large_df.printSchema()
 
+-------- Broadcast Join
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import broadcast
+
+def broadcast_join(
+    large_df: DataFrame, 
+    small_df: DataFrame, 
+    on: str | list | callable,
+    how: str = "inner"
+) -> DataFrame:
+    """
+    Perform a broadcast join between a large DataFrame and a small DataFrame.
+
+    This function is designed to be used in a Databricks environment where
+    the Spark session is already active. It mimics the behavior of the standard
+    DataFrame.join() method but automatically broadcasts the smaller DataFrame.
+
+    Args:
+        large_df (DataFrame): The larger DataFrame to join.
+        small_df (DataFrame): The smaller DataFrame to be broadcasted.
+        on (str | list | callable): Columns to join on. Same as the 'on' parameter
+                                    in the standard DataFrame.join() method.
+        how (str, optional): The type of join to perform. Defaults to "inner".
+
+    Returns:
+        DataFrame: The result of the broadcast join.
+
+    Examples:
+        >>> large_df = spark.createDataFrame([(1, "A"), (2, "B"), (3, "C")], ["id", "value_large"])
+        >>> small_df = spark.createDataFrame([(1, "X"), (2, "Y")], ["id", "value_small"])
+        >>> result = broadcast_join(large_df, small_df, "id", "left")
+        >>> result.show()
+        +---+-----------+-----------+
+        | id|value_large|value_small|
+        +---+-----------+-----------+
+        |  1|          A|          X|
+        |  2|          B|          Y|
+        |  3|          C|       null|
+        +---+-----------+-----------+
+    """
+    if not isinstance(large_df, DataFrame) or not isinstance(small_df, DataFrame):
+        raise TypeError("Both large_df and small_df must be PySpark DataFrames")
+
+    if not isinstance(how, str):
+        raise TypeError("'how' parameter must be a string")
+
+    # Perform the broadcast join
+    return large_df.join(broadcast(small_df), on=on, how=how)
+
+# Example usage
+def example_usage():
+    # Assuming spark session is already available in Databricks
+    large_df = spark.createDataFrame([(1, "A"), (2, "B"), (3, "C")], ["id", "value_large"])
+    small_df = spark.createDataFrame([(1, "X"), (2, "Y")], ["id", "value_small"])
+    
+    # Simple join on a single column
+    result1 = broadcast_join(large_df, small_df, "id", "left")
+    result1.show()
+    
+    # Join on multiple columns
+    large_df2 = large_df.withColumn("category", lambda: "cat1")
+    small_df2 = small_df.withColumn("category", lambda: "cat1")
+    result2 = broadcast_join(large_df2, small_df2, ["id", "category"], "inner")
+    result2.show()
+    
+    # Join with a complex condition
+    result3 = broadcast_join(large_df, small_df, large_df.id == small_df.id, "left")
+    result3.show()
+
+# Uncomment the following line to run the example in Databricks
+# example_usage()
+
 
 ```
