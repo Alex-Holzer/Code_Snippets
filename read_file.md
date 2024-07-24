@@ -144,6 +144,123 @@ def example_usage():
 # example_usage()
 
 
+--- replace string----
+
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import regexp_replace, lower
+from typing import Union, List
+
+def replace_string_in_columns(
+    df: DataFrame,
+    columns: Union[str, List[str]],
+    find_string: str,
+    replace_string: str,
+    case_sensitive: bool = True
+) -> DataFrame:
+    """
+    Perform a configurable case-sensitive find-and-replace operation on specified columns of a DataFrame.
+
+    This function replaces all occurrences of 'find_string' with 'replace_string' in the specified
+    column(s) of the input DataFrame. The operation can be case-sensitive or case-insensitive.
+
+    Args:
+        df (DataFrame): The input PySpark DataFrame.
+        columns (Union[str, List[str]]): A single column name or a list of column names to perform the replacement on.
+        find_string (str): The string to find.
+        replace_string (str): The string to replace with.
+        case_sensitive (bool, optional): If True, the replacement is case-sensitive. If False, it's case-insensitive. 
+                                         Defaults to True.
+
+    Returns:
+        DataFrame: A new DataFrame with the specified replacements applied.
+
+    Examples:
+        >>> df = spark.createDataFrame([("Billy", 25), ("Sally", 30)], ["Name", "Age"])
+        >>> result = replace_string_in_columns(df, "Name", "l", "n", case_sensitive=True)
+        >>> result.show()
+        +-----+---+
+        | Name|Age|
+        +-----+---+
+        |Binny| 25|
+        |Sally| 30|
+        +-----+---+
+
+        >>> result = replace_string_in_columns(df, "Name", "L", "n", case_sensitive=False)
+        >>> result.show()
+        +-----+---+
+        | Name|Age|
+        +-----+---+
+        |Binny| 25|
+        |Sanny| 30|
+        +-----+---+
+    """
+    if not isinstance(df, DataFrame):
+        raise TypeError("Input 'df' must be a PySpark DataFrame")
+    
+    if isinstance(columns, str):
+        columns = [columns]
+    elif not isinstance(columns, list) or not all(isinstance(col, str) for col in columns):
+        raise TypeError("'columns' must be a string or a list of strings")
+    
+    if not isinstance(find_string, str) or not isinstance(replace_string, str):
+        raise TypeError("'find_string' and 'replace_string' must be strings")
+    
+    if not isinstance(case_sensitive, bool):
+        raise TypeError("'case_sensitive' must be a boolean")
+    
+    # Validate that all specified columns exist in the DataFrame
+    missing_columns = set(columns) - set(df.columns)
+    if missing_columns:
+        raise ValueError(f"Columns {missing_columns} not found in the DataFrame")
+    
+    # Escape special regex characters in find_string
+    escaped_find_string = find_string.replace('\\', '\\\\').replace('.', '\\.').replace('*', '\\*')
+    escaped_find_string = escaped_find_string.replace('+', '\\+').replace('?', '\\?').replace('|', '\\|')
+    escaped_find_string = escaped_find_string.replace('{', '\\{').replace('}', '\\}').replace('(', '\\(')
+    escaped_find_string = escaped_find_string.replace(')', '\\)').replace('[', '\\[').replace(']', '\\]')
+    escaped_find_string = escaped_find_string.replace('^', '\\^').replace('$', '\\$')
+    
+    # Apply the replacement to each specified column
+    for column in columns:
+        if case_sensitive:
+            df = df.withColumn(column, regexp_replace(df[column], escaped_find_string, replace_string))
+        else:
+            df = df.withColumn(column, 
+                regexp_replace(
+                    lower(df[column]), 
+                    lower(escaped_find_string), 
+                    replace_string
+                ).alias(column)
+            )
+    
+    return df
+
+# Example usage
+def example_usage():
+    # Assuming spark session is already available in Databricks
+    df = spark.createDataFrame([("Billy", 25), ("Sally", 30)], ["Name", "Age"])
+    
+    # Case-sensitive replacement: Replace 'l' with 'n' in the 'Name' column
+    result1 = replace_string_in_columns(df, "Name", "l", "n", case_sensitive=True)
+    print("Example 1: Case-sensitive replacement of 'l' with 'n' in 'Name' column")
+    result1.show()
+    
+    # Case-insensitive replacement: Replace 'L' with 'n' in the 'Name' column
+    result2 = replace_string_in_columns(df, "Name", "L", "n", case_sensitive=False)
+    print("Example 2: Case-insensitive replacement of 'L' with 'n' in 'Name' column")
+    result2.show()
+    
+    # Multiple columns: Replace 'a' with 'X' in multiple columns (case-sensitive)
+    df2 = spark.createDataFrame([("Hello World", "Test"), ("Hello Earth", "Example")], ["Greeting", "Type"])
+    result3 = replace_string_in_columns(df2, ["Greeting", "Type"], "e", "X", case_sensitive=True)
+    print("Example 3: Case-sensitive replacement of 'e' with 'X' in 'Greeting' and 'Type' columns")
+    result3.show()
+
+# Uncomment the following line to run the example in Databricks
+# example_usage()
+
+
+
 
 
 ```
