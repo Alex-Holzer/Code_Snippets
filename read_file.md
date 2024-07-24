@@ -19,7 +19,53 @@ def measure_execution_time(func):
             print(f"Resulting DataFrame has {result.count()} rows and {len(result.columns)} columns")
         
         return result
-    return wrapper----------------------------- 
+    return wrapper
+
+----------------------------- Data set
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import rand, randn, lit, expr, concat, col
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, BooleanType, TimestampType
+import string
+import random
+
+def generate_large_dataset(spark, num_rows=100_000_000):
+    # Define schema
+    schema = StructType([
+        StructField("id", IntegerType(), False),
+        StructField("name", StringType(), True),
+        StructField("age", IntegerType(), True),
+        StructField("salary", DoubleType(), True),
+        StructField("is_customer", BooleanType(), True),
+        StructField("registration_date", TimestampType(), True)
+    ] + [StructField(f"feature_{i}", DoubleType(), True) for i in range(1, 56)])  # 55 additional numeric features
+
+    # Generate base DataFrame
+    df = spark.range(0, num_rows)
+
+    # Add columns
+    df = df.withColumn("name", concat(
+        lit(random.choice(string.ascii_uppercase)),
+        expr("substring(md5(rand()), 1, 9)")  # Generate random string
+    ))
+    df = df.withColumn("age", (rand() * 80 + 18).cast(IntegerType()))
+    df = df.withColumn("salary", (randn() * 20000 + 50000).cast(DoubleType()))
+    df = df.withColumn("is_customer", (rand() > 0.5).cast(BooleanType()))
+    df = df.withColumn("registration_date", expr("date_sub(current_date(), cast(rand() * 1000 as int))"))
+
+    # Add 55 random numeric features
+    for i in range(1, 56):
+        df = df.withColumn(f"feature_{i}", randn())
+
+    return df.select(schema.fieldNames())
+
+# Usage example
+spark = SparkSession.builder.appName("LargeDatasetGenerator").getOrCreate()
+large_df = generate_large_dataset(spark)
+print(f"Generated DataFrame with {large_df.count()} rows and {len(large_df.columns)} columns")
+large_df.show(5)
+large_df.printSchema()
+
 
 
 ```
