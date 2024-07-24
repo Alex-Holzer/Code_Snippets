@@ -373,6 +373,173 @@ def example_usage():
 # Uncomment the following line to run the example in Databricks
 # example_usage()
 
+--------- improved add_mapped_column------
+
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from pyspark.sql import Column
+from typing import Dict, Any, Union
+
+def create_mapping_conditions(mapping_dict: Dict[str, Any], source_column: str):
+    """
+    Create a list of conditions based on the mapping dictionary.
+
+    This helper function generates conditions for each key in the mapping dictionary,
+    supporting both exact matches and wildcard patterns.
+
+    Args:
+        mapping_dict (Dict[str, Any]): A dictionary mapping source values (potentially with wildcards) to target values.
+        source_column (str): The name of the column to map from.
+
+    Returns:
+        list: A list of tuples, each containing a condition and its corresponding value.
+    """
+    return [
+        (F.col(source_column).like(key) if '%' in key else F.col(source_column) == key, F.lit(value))
+        for key, value in mapping_dict.items()
+    ]
+
+def add_mapped_column(
+    df: DataFrame,
+    source_column: str,
+    target_column: str,
+    mapping_dict: Dict[str, Any],
+    otherwise: Union[Any, Column]
+) -> DataFrame:
+    """
+    Add a new column to the DataFrame based on a mapping dictionary with wildcard support.
+
+    This function creates a new column in the DataFrame by mapping values
+    from a source column using a provided dictionary. It supports wildcard
+    matching using '%' similar to SQL LIKE operations. If a value is not
+    found in the mapping dictionary, it uses the provided 'otherwise' value,
+    which can be a constant or another column.
+
+    Args:
+        df (DataFrame): The input DataFrame.
+        source_column (str): The name of the column to map from.
+        target_column (str): The name of the new column to create.
+        mapping_dict (Dict[str, Any]): A dictionary mapping source values (potentially with wildcards) to target values.
+        otherwise (Union[Any, Column]): The value or column to use when the source value doesn't match any mapping.
+
+    Returns:
+        DataFrame: The original DataFrame with the new mapped column added.
+
+    Example:
+        >>> df = spark.createDataFrame([("Apple", "Fruit"), ("Banana", "Fruit"), ("Carrot", "Vegetable")], ["food", "type"])
+        >>> mapping = {"%pp%": "Contains pp", "Ban%": "Starts with Ban"}
+        >>> result = add_mapped_column(df, "food", "category", mapping, F.col("type"))
+        >>> result.show()
+        +------+---------+----------------+
+        |  food|     type|        category|
+        +------+---------+----------------+
+        | Apple|    Fruit|    Contains pp |
+        |Banana|    Fruit|Starts with Ban |
+        |Carrot|Vegetable|     Vegetable  |
+        +------+---------+----------------+
+    """
+    conditions = create_mapping_conditions(mapping_dict, source_column)
+    
+    mapping_expr = conditions[0][1]
+    for condition, value in conditions[1:]:
+        mapping_expr = F.when(condition, value).otherwise(mapping_expr)
+    
+    # Handle the case where 'otherwise' is a column
+    if isinstance(otherwise, Column):
+        final_expr = F.when(F.expr(' OR '.join([c[0].cast('string') for c in conditions])), mapping_expr).otherwise(otherwise)
+    else:
+        final_expr = F.when(F.expr(' OR '.join([c[0].cast('string') for c in conditions])), mapping_expr).otherwise(F.lit(otherwise))
+    
+    return df.withColumn(target_column, final_expr)
+
+
+
+
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+
+# Initialize SparkSession
+spark = SparkSession.builder.appName("TestAddMappedColumn").getOrCreate()
+
+# Import the function (assuming it's in a module named 'transformations')
+from transformations import add_mapped_column
+
+# Create a sample DataFrame
+data = [
+    ("Apple", "Fruit", 1),
+    ("Banana", "Fruit", 2),
+    ("Carrot", "Vegetable", 3),
+    ("Date", "Fruit", 4),
+    ("Eggplant", "Vegetable", 5)
+]
+df = spark.createDataFrame(data, ["food", "type", "id"])
+
+# Test 1: Basic exact match mapping with constant otherwise
+def test_exact_match():
+    mapping = {"Apple": "Red fruit", "Banana": "Yellow fruit"}
+    result = add_mapped_column(df, "food", "category", mapping, "Other")
+    result.show()
+    assert result.filter(F.col("food") == "Apple").select("category").first()[0] == "Red fruit"
+    assert result.filter(F.col("food") == "Carrot").select("category").first()[0] == "Other"
+
+# Test 2: Wildcard mapping with constant otherwise
+def test_wildcard_match():
+    mapping = {"%pp%": "Contains pp", "Ban%": "Starts with Ban", "%t": "Ends with t"}
+    result = add_mapped_column(df, "food", "category", mapping, "No match")
+    result.show()
+    assert result.filter(F.col("food") == "Apple").select("category").first()[0] == "Contains pp"
+    assert result.filter(F.col("food") == "Carrot").select("category").first()[0] == "Ends with t"
+    assert result.filter(F.col("food") == "Date").select("category").first()[0] == "No match"
+
+# Test 3: Using another column as otherwise
+def test_column_otherwise():
+    mapping = {"Apple": "Special fruit", "Carrot": "Orange vegetable"}
+    result = add_mapped_column(df, "food", "category", mapping, F.col("type"))
+    result.show()
+    assert result.filter(F.col("food") == "Apple").select("category").first()[0] == "Special fruit"
+    assert result.filter(F.col("food") == "Banana").select("category").first()[0] == "Fruit"
+
+# Test 4: Combining exact and wildcard matches
+def test_combined_matching():
+    mapping = {"Apple": "Exact match", "%ana": "Ends with ana", "C%": "Starts with C"}
+    result = add_mapped_column(df, "food", "category", mapping, "Default")
+    result.show()
+    assert result.filter(F.col("food") == "Apple").select("category").first()[0] == "Exact match"
+    assert result.filter(F.col("food") == "Banana").select("category").first()[0] == "Ends with ana"
+    assert result.filter(F.col("food") == "Carrot").select("category").first()[0] == "Starts with C"
+    assert result.filter(F.col("food") == "Date").select("category").first()[0] == "Default"
+
+# Test 5: Using the function in a transformation pipeline
+def test_in_pipeline():
+    def transform_pipeline(df):
+        mapping1 = {"%pp%": "Contains pp", "Ban%": "Starts with Ban"}
+        mapping2 = {"1": "One", "2": "Two"}
+        return (
+            df
+            .transform(lambda df: add_mapped_column(df, "food", "category1", mapping1, F.col("type")))
+            .transform(lambda df: add_mapped_column(df, "id", "category2", mapping2, "Many"))
+        )
+    
+    result = transform_pipeline(df)
+    result.show()
+    assert result.filter(F.col("food") == "Apple").select("category1").first()[0] == "Contains pp"
+    assert result.filter(F.col("food") == "Banana").select("category1").first()[0] == "Starts with Ban"
+    assert result.filter(F.col("food") == "Carrot").select("category1").first()[0] == "Vegetable"
+    assert result.filter(F.col("id") == 1).select("category2").first()[0] == "One"
+    assert result.filter(F.col("id") == 5).select("category2").first()[0] == "Many"
+
+# Run all tests
+if __name__ == "__main__":
+    test_exact_match()
+    test_wildcard_match()
+    test_column_otherwise()
+    test_combined_matching()
+    test_in_pipeline()
+    
+    print("All tests completed successfully!")
+
+# Clean up
+spark.stop()
 
 
 ```
