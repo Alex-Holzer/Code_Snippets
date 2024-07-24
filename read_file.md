@@ -69,13 +69,15 @@ display(large_df.limit(5))  # Using display() instead of show() in Databricks
 large_df.printSchema()
 
 -------- Broadcast Join
+
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import broadcast
+from typing import Union, List, Callable
 
 def broadcast_join(
     large_df: DataFrame, 
     small_df: DataFrame, 
-    on: str | list | callable,
+    on: Union[str, List[str], Callable],
     how: str = "inner"
 ) -> DataFrame:
     """
@@ -88,8 +90,8 @@ def broadcast_join(
     Args:
         large_df (DataFrame): The larger DataFrame to join.
         small_df (DataFrame): The smaller DataFrame to be broadcasted.
-        on (str | list | callable): Columns to join on. Same as the 'on' parameter
-                                    in the standard DataFrame.join() method.
+        on (Union[str, List[str], Callable]): Columns to join on. Same as the 'on' 
+                                              parameter in the standard DataFrame.join() method.
         how (str, optional): The type of join to perform. Defaults to "inner".
 
     Returns:
@@ -134,11 +136,14 @@ def example_usage():
     result2.show()
     
     # Join with a complex condition
-    result3 = broadcast_join(large_df, small_df, large_df.id == small_df.id, "left")
+    from pyspark.sql import functions as F
+    result3 = broadcast_join(large_df, small_df, F.col("large_df.id") == F.col("small_df.id"), "left")
     result3.show()
 
 # Uncomment the following line to run the example in Databricks
 # example_usage()
+
+
 
 
 ```
