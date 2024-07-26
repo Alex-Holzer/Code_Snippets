@@ -40,4 +40,49 @@ def list_files_in_folder(folder_path):
 
 
 
+def list_directories_in_path(path):
+    """
+    List all directories in a specified path using Databricks' dbutils.
+
+    Args:
+        path (str): The full path to the directory in the data lake storage.
+
+    Returns:
+        list: A list of directory paths in the specified path.
+
+    Raises:
+        ValueError: If the path is empty or None.
+
+    Example:
+        >>> path = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW"
+        >>> directories = list_directories_in_path(path)
+        >>> for directory in directories:
+        ...     print(directory)
+    """
+    if not path:
+        raise ValueError("path cannot be empty or None")
+
+    try:
+        # Use dbutils.fs.ls to list files and directories in the specified path
+        all_items = dbutils.fs.ls(path)
+        
+        # Filter out files and return only directory paths
+        return [item.path for item in all_items if item.isDir()]
+    except Exception as e:
+        print(f"An error occurred while listing directories: {str(e)}")
+        return []
+
+# Example usage
+# path = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW"
+# directories = list_directories_in_path(path)
+# for directory in directories:
+#     print(directory)
+
+
+
+
+
+
+
+
 ```
