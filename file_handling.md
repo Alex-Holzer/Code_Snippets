@@ -130,5 +130,41 @@ def recursive_directory_listing(path: str) -> List[Dict[str, str]]:
 
 
 
+def check_path_exists(path: str) -> bool:
+    """
+    Check if a file or directory exists at the specified path.
+
+    Args:
+        path (str): The full path to the file or directory in the data lake storage.
+
+    Returns:
+        bool: True if the path exists, False otherwise.
+
+    Raises:
+        ValueError: If the path is empty or None.
+
+    Example:
+        >>> path = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW/example.csv"
+        >>> exists = check_path_exists(path)
+        >>> print(f"The path {'exists' if exists else 'does not exist'}")
+    """
+    if not path:
+        raise ValueError("path cannot be empty or None")
+
+    try:
+        return dbutils.fs.ls(path) is not None
+    except Exception as e:
+        if "java.io.FileNotFoundException" in str(e):
+            return False
+        else:
+            print(f"An error occurred while checking path existence: {str(e)}")
+            return False
+
+# Example usage
+# path = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW/example.csv"
+# exists = check_path_exists(path)
+# print(f"The path {'exists' if exists else 'does not exist'}")
+
+
 
 ```
