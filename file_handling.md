@@ -80,7 +80,53 @@ def list_directories_in_path(path):
 
 
 
+from typing import List, Dict
 
+def recursive_directory_listing(path: str) -> List[Dict[str, str]]:
+    """
+    Recursively list all files and directories under a given path.
+
+    Args:
+        path (str): The full path to the directory in the data lake storage.
+
+    Returns:
+        List[Dict[str, str]]: A list of dictionaries, each containing 'path' and 'type' 
+        ('file' or 'directory') for each item found.
+
+    Raises:
+        ValueError: If the path is empty or None.
+
+    Example:
+        >>> path = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW"
+        >>> items = recursive_directory_listing(path)
+        >>> for item in items:
+        ...     print(f"{item['type']}: {item['path']}")
+    """
+    if not path:
+        raise ValueError("path cannot be empty or None")
+
+    def _recursive_list(current_path: str) -> List[Dict[str, str]]:
+        try:
+            items = dbutils.fs.ls(current_path)
+            result = []
+            for item in items:
+                if item.isDir():
+                    result.append({"path": item.path, "type": "directory"})
+                    result.extend(_recursive_list(item.path))
+                else:
+                    result.append({"path": item.path, "type": "file"})
+            return result
+        except Exception as e:
+            print(f"An error occurred while listing {current_path}: {str(e)}")
+            return []
+
+    return _recursive_list(path)
+
+# Example usage
+# path = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW"
+# items = recursive_directory_listing(path)
+# for item in items:
+#     print(f"{item['type']}: {item['path']}")
 
 
 
