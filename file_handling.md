@@ -292,24 +292,32 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
 -------- DELTA SAVE -------
 
 from pyspark.sql import DataFrame
-from typing import Optional, List
+from delta.tables import DeltaTable
+from typing import Optional, List, Dict, Any
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def validate_save_params(
     df: DataFrame, 
     path: str, 
     mode: str, 
-    metastore_path: Optional[str] = None,
+    options: Dict[str, Any],
+    partition_by: Optional[List[str]] = None,
     optimize: bool = False,
     zorder_by: Optional[List[str]] = None
 ) -> None:
     """
     Validate the input parameters for the save_delta_format function.
-
+    
     Args:
         df (DataFrame): The PySpark DataFrame to be saved.
         path (str): The path where the DataFrame should be saved in ADLS.
         mode (str): The save mode ('overwrite', 'append', 'ignore', or 'error').
-        metastore_path (Optional[str]): The path for persisting in the Hive metastore.
+        options (Dict[str, Any]): Additional options for saving the Delta table.
+        partition_by (Optional[List[str]]): Columns to partition the data by.
         optimize (bool): Whether to run OPTIMIZE command after saving.
         zorder_by (Optional[List[str]]): List of columns to ZORDER by.
 
@@ -326,8 +334,14 @@ def validate_save_params(
     if mode not in valid_modes:
         raise ValueError(f"Invalid mode. Must be one of: {', '.join(valid_modes)}")
     
-    if metastore_path is not None and (not isinstance(metastore_path, str) or not metastore_path.strip()):
-        raise ValueError("'metastore_path' must be None or a non-empty string.")
+    if not isinstance(options, dict):
+        raise ValueError("'options' must be a dictionary.")
+    
+    if partition_by is not None:
+        if not isinstance(partition_by, list) or not all(isinstance(col, str) for col in partition_by):
+            raise ValueError("'partition_by' must be None or a list of strings.")
+        if not set(partition_by).issubset(df.columns):
+            raise ValueError("All columns in 'partition_by' must exist in the DataFrame.")
     
     if not isinstance(optimize, bool):
         raise ValueError("'optimize' must be a boolean value.")
@@ -338,96 +352,131 @@ def validate_save_params(
         if not set(zorder_by).issubset(df.columns):
             raise ValueError("All columns in 'zorder_by' must exist in the DataFrame.")
 
-
-from pyspark.sql import DataFrame
-from typing import Optional, List
-from delta.tables import DeltaTable
-
 def save_delta_format(
     df: DataFrame, 
     path: str, 
-    mode: str, 
-    metastore_path: Optional[str] = None,
+    mode: str = "overwrite", 
+    options: Dict[str, Any] = {},
+    partition_by: Optional[List[str]] = None,
     optimize: bool = False,
-    zorder_by: Optional[List[str]] = None
+    zorder_by: Optional[List[str]] = None,
+    optimize_options: Dict[str, Any] = {}
 ) -> None:
     """
-    Save a PySpark DataFrame in Delta format to Azure Data Lake Storage with optional optimization.
+    Save a PySpark DataFrame in Delta format to Azure Data Lake Storage with advanced options.
 
     This function saves the input DataFrame in Delta format to the specified path in Azure Data Lake Storage.
-    Optionally, it can also persist the data in the Hive metastore and perform OPTIMIZE and ZORDER operations.
+    It supports partitioning, custom save options, and optional OPTIMIZE and ZORDER operations.
 
     Args:
         df (DataFrame): The PySpark DataFrame to be saved.
         path (str): The path where the DataFrame should be saved in ADLS.
-        mode (str): The save mode ('overwrite', 'append', 'ignore', or 'error').
-        metastore_path (Optional[str]): The path for persisting in the Hive metastore.
-        optimize (bool): Whether to run OPTIMIZE command after saving.
+        mode (str): The save mode ('overwrite', 'append', 'ignore', or 'error'). Default is 'overwrite'.
+        options (Dict[str, Any]): Additional options for saving the Delta table (e.g., {'overwriteSchema': 'true'}).
+        partition_by (Optional[List[str]]): Columns to partition the data by.
+        optimize (bool): Whether to run OPTIMIZE command after saving. Default is False.
         zorder_by (Optional[List[str]]): List of columns to ZORDER by.
+        optimize_options (Dict[str, Any]): Additional options for the OPTIMIZE command.
 
     Returns:
         None
 
     Example:
-        >>> df = spark.createDataFrame([(1, "Alice"), (2, "Bob")], ["id", "name"])
-        >>> save_delta_format(df, "abfss://container@storage.dfs.core.windows.net/path/to/delta", 
-        ...                   "overwrite", optimize=True, zorder_by=["id"])
+        >>> df = spark.createDataFrame([(1, "Alice", "2021-01-01"), (2, "Bob", "2021-01-02")], ["id", "name", "date"])
+        >>> save_delta_format(
+        ...     df, 
+        ...     "abfss://container@storage.dfs.core.windows.net/path/to/delta",
+        ...     mode="overwrite",
+        ...     options={"overwriteSchema": "true"},
+        ...     partition_by=["date"],
+        ...     optimize=True,
+        ...     zorder_by=["id", "name"],
+        ...     optimize_options={"maxFilesPerTxn": 2}
+        ... )
     """
     try:
         # Validate input parameters
-        validate_save_params(df, path, mode, metastore_path, optimize, zorder_by)
+        validate_save_params(df, path, mode, options, partition_by, optimize, zorder_by)
+
+        # Prepare the writer
+        writer = df.write.format("delta").mode(mode)
+
+        # Apply partitioning if specified
+        if partition_by:
+            writer = writer.partitionBy(partition_by)
+
+        # Apply additional options
+        for key, value in options.items():
+            writer = writer.option(key, value)
 
         # Save the DataFrame in Delta format
-        (df.write
-         .format("delta")
-         .mode(mode)
-         .save(path))
-
-        print(f"Successfully saved DataFrame in Delta format to: {path}")
-
-        # Persist in Hive metastore if metastore_path is provided
-        if metastore_path:
-            table_name = metastore_path.split('.')[-1]
-            
-            # Create or replace the table in the metastore
-            df.write.format("delta").mode("overwrite").saveAsTable(metastore_path)
-            
-            # Ensure the table is pointing to the correct ADLS location
-            spark.sql(f"""
-            ALTER TABLE {metastore_path}
-            SET LOCATION '{path}'
-            """)
-            
-            print(f"Successfully persisted DataFrame in Hive metastore: {metastore_path}")
+        writer.save(path)
+        logger.info(f"Successfully saved DataFrame in Delta format to: {path}")
 
         # Perform OPTIMIZE and ZORDER if requested
         if optimize:
             delta_table = DeltaTable.forPath(spark, path)
+            optimize_builder = delta_table.optimize()
+
+            # Apply custom optimize options
+            for key, value in optimize_options.items():
+                optimize_builder = optimize_builder.option(key, value)
+
             if zorder_by:
-                print(f"Running OPTIMIZE and ZORDER BY {', '.join(zorder_by)}...")
-                delta_table.optimize().executeZOrderBy(zorder_by)
+                logger.info(f"Running OPTIMIZE and ZORDER BY {', '.join(zorder_by)}...")
+                optimize_builder.executeZOrderBy(zorder_by)
             else:
-                print("Running OPTIMIZE...")
-                delta_table.optimize().executeCompaction()
-            print("Optimization completed successfully.")
+                logger.info("Running OPTIMIZE...")
+                optimize_builder.executeCompaction()
+            
+            logger.info("Optimization completed successfully.")
 
     except Exception as e:
-        print(f"❌ Error saving DataFrame: {str(e)}")
+        logger.error(f"Error saving DataFrame: {str(e)}")
         raise
 
 def save_delta_wrapper(
     path: str, 
-    mode: str, 
-    metastore_path: Optional[str] = None,
+    mode: str = "overwrite", 
+    options: Dict[str, Any] = {},
+    partition_by: Optional[List[str]] = None,
     optimize: bool = False,
-    zorder_by: Optional[List[str]] = None
+    zorder_by: Optional[List[str]] = None,
+    optimize_options: Dict[str, Any] = {}
 ):
+    """
+    Wrapper function to use save_delta_format with DataFrame.transform().
+
+    Args:
+        path (str): The path where the DataFrame should be saved in ADLS.
+        mode (str): The save mode ('overwrite', 'append', 'ignore', or 'error'). Default is 'overwrite'.
+        options (Dict[str, Any]): Additional options for saving the Delta table.
+        partition_by (Optional[List[str]]): Columns to partition the data by.
+        optimize (bool): Whether to run OPTIMIZE command after saving. Default is False.
+        zorder_by (Optional[List[str]]): List of columns to ZORDER by.
+        optimize_options (Dict[str, Any]): Additional options for the OPTIMIZE command.
+
+    Returns:
+        Callable: A function that can be used with DataFrame.transform().
+
+    Example:
+        >>> df_transformed = (df
+        ...     .transform(some_transformation)
+        ...     .transform(save_delta_wrapper(
+        ...         "abfss://container@storage.dfs.core.windows.net/path/to/delta",
+        ...         mode="overwrite",
+        ...         options={"overwriteSchema": "true"},
+        ...         partition_by=["date"],
+        ...         optimize=True,
+        ...         zorder_by=["id", "name"],
+        ...         optimize_options={"maxFilesPerTxn": 2}
+        ...     ))
+        ... )
+    """
     def _save_delta(df: DataFrame) -> DataFrame:
-        save_delta_format(df, path, mode, metastore_path, optimize, zorder_by)
+        save_delta_format(df, path, mode, options, partition_by, optimize, zorder_by, optimize_options)
         return df
     return _save_delta
-
-
 
 
 
