@@ -480,11 +480,13 @@ def save_delta_wrapper(
 
 
 --- rename files --------
+
 from pyspark.sql import SparkSession, DataFrame
 from typing import Optional, List, Tuple
 import re
 from datetime import datetime
 import logging
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -493,7 +495,7 @@ logger = logging.getLogger(__name__)
 def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format: Optional[str] = None) -> List[Tuple[str, str]]:
     """
     Rename files in the specified Azure Data Lake Storage directory by extracting the date
-    from the filename and appending a suffix.
+    from the filename, appending a suffix, and preserving the file extension.
 
     Args:
         directory_path (str): The path to the directory containing the files to be renamed.
@@ -563,8 +565,11 @@ def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format:
                 # Format the date as yyyy_mm_dd
                 formatted_date = file_date.strftime('%Y_%m_%d')
                 
+                # Extract file extension
+                file_name, file_extension = os.path.splitext(old_filename)
+                
                 # Construct new filename
-                new_filename = f"{formatted_date}_{suffix}"
+                new_filename = f"{formatted_date}_{suffix}{file_extension}"
                 
                 # Construct new path
                 new_path = f"{directory_path}/{new_filename}"
@@ -614,8 +619,6 @@ def rename_files_wrapper(directory_path: str, suffix: str, date_format: Optional
 
 # Example usage
 # df_with_renamed_files = spark.table("my_table").transform(rename_files_wrapper("abfss://container@storage.dfs.core.windows.net/path/to/files", "Report"))
-
-
 
 
 
