@@ -217,11 +217,11 @@ def list_files_by_pattern(directory: str, pattern: str) -> List[Dict[str, str]]:
 #     print(f"Name: {file['name']}, Path: {file['path']}")
 
 
-
 import pandas as pd
 from typing import Optional, Any
 from pyspark.sql import DataFrame
-from io import BytesIO
+import tempfile
+import os
 
 def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, **kwargs: Any) -> Optional[DataFrame]:
     """
@@ -256,21 +256,28 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
         raise ValueError("file_path cannot be empty or None")
 
     try:
-        # Read the file content using dbutils
-        file_content = dbutils.fs.head(file_path, 1024 * 1024 * 100)  # Read up to 100MB
-        
-        # Create a BytesIO object from the file content
-        bytes_io = BytesIO(file_content)
-        
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_file:
+            temp_path = temp_file.name
+
+        # Copy the XLSX file from ABFS to the temporary file
+        dbutils.fs.cp(file_path, f"file:{temp_path}")
+
         # Read the XLSX file into a pandas DataFrame
-        pdf = pd.read_excel(bytes_io, sheet_name=sheet_name, **kwargs)
+        pdf = pd.read_excel(temp_path, sheet_name=sheet_name, **kwargs)
 
         # Convert pandas DataFrame to PySpark DataFrame
         df = spark.createDataFrame(pdf)
+
+        # Clean up the temporary file
+        os.unlink(temp_path)
         
         return df
     except Exception as e:
         print(f"An error occurred while extracting XLSX file: {str(e)}")
+        # Clean up the temporary file in case of an error
+        if 'temp_path' in locals():
+            os.unlink(temp_path)
         return None
 
 # Example usage
@@ -278,7 +285,6 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
 # df = extract_xlsx_to_dataframe(file_path, sheet_name="Sheet1", header=0, usecols="A:C")
 # if df is not None:
 #     df.show()
-
 
 
 
