@@ -219,7 +219,7 @@ def list_files_by_pattern(directory: str, pattern: str) -> List[Dict[str, str]]:
 
 
 import pandas as pd
-from typing import Optional, Any, Union
+from typing import Optional, Any
 from pyspark.sql import DataFrame
 from io import BytesIO
 
@@ -257,10 +257,10 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
 
     try:
         # Read the file content using dbutils
-        file_content = dbutils.fs.read(file_path, -1)  # -1 reads the entire file
+        file_content = dbutils.fs.head(file_path, 1024 * 1024 * 100)  # Read up to 100MB
         
         # Create a BytesIO object from the file content
-        bytes_io = BytesIO(file_content.encode())
+        bytes_io = BytesIO(file_content)
         
         # Read the XLSX file into a pandas DataFrame
         pdf = pd.read_excel(bytes_io, sheet_name=sheet_name, **kwargs)
