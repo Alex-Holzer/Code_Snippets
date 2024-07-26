@@ -488,20 +488,18 @@ from datetime import datetime
 import logging
 import os
 
-# Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format: Optional[str] = None) -> List[Tuple[str, str]]:
     """
-    Rename files in the specified Azure Data Lake Storage directory by extracting date(s)
-    from the filename, formatting them, and appending a suffix while preserving the file extension.
-    This function handles both single date and date range scenarios.
+    Rename files in the specified Azure Data Lake Storage directory by extracting the date
+    from the filename, appending a suffix, and preserving the file extension.
 
     Args:
         directory_path (str): The path to the directory containing the files to be renamed.
         suffix (str): The suffix to be appended to the renamed files.
-        date_format (Optional[str]): The format of the dates in the filename. If None, it will try to infer the format.
+        date_format (Optional[str]): The format of the date in the filename. If None, it will try to infer the format.
 
     Returns:
         List[Tuple[str, str]]: A list of tuples containing the old and new filenames.
@@ -510,86 +508,80 @@ def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format:
         ValueError: If the directory path is invalid or if no files are found.
 
     Example:
-        >>> renamed_files = rename_files_with_date_suffix("abfss://container@storage.dfs.core.windows.net/path/to/files", "Reporting")
+        >>> renamed_files = rename_files_with_date_suffix("abfss://container@storage.dfs.core.windows.net/path/to/files", "Report")
         >>> for old_name, new_name in renamed_files:
         ...     print(f"Renamed: {old_name} -> {new_name}")
     """
     try:
-        # Validate input parameters
         if not directory_path or not isinstance(directory_path, str):
             raise ValueError("Invalid directory path")
         if not suffix or not isinstance(suffix, str):
             raise ValueError("Invalid suffix")
 
-        # List files in the directory
         files = dbutils.fs.ls(directory_path)
         if not files:
             raise ValueError(f"No files found in the directory: {directory_path}")
 
         renamed_files = []
 
-        def parse_date(date_str: str) -> datetime:
-            if len(date_str) == 8:  # yyyymmdd
-                return datetime.strptime(date_str, '%Y%m%d')
-            elif '_' in date_str or '-' in date_str:
-                separator = '_' if '_' in date_str else '-'
-                parts = date_str.split(separator)
-                if len(parts[0]) == 4:  # yyyy-mm-dd or yyyy_mm_dd
-                    return datetime.strptime(date_str, f'%Y{separator}%m{separator}%d')
-                else:  # dd-mm-yyyy or dd_mm_yyyy
-                    return datetime.strptime(date_str, f'%d{separator}%m{separator}%Y')
-            raise ValueError(f"Unrecognized date format: {date_str}")
-
-        def extract_dates(filename: str) -> Tuple[Optional[datetime], Optional[datetime]]:
+        def parse_date(date_str: str) -> Optional[datetime]:
             date_patterns = [
-                r'(\d{4}[-_]\d{2}[-_]\d{2})(?:.*?(\d{4}[-_]\d{2}[-_]\d{2}))?',  # yyyy-mm-dd or yyyy_mm_dd
-                r'(\d{2}[-_]\d{2}[-_]\d{4})(?:.*?(\d{2}[-_]\d{2}[-_]\d{4}))?',  # dd-mm-yyyy or dd_mm_yyyy
-                r'(\d{8})(?:.*?(\d{8}))?'  # yyyymmdd
+                # Year_Month
+                (r'(\d{4})[-_.](\d{2})$', '%Y%m'),
+                # Year_Month_Day
+                (r'(\d{4})[-_.](\d{2})[-_.](\d{2})', '%Y%m%d'),
+                # Day_Month_Year
+                (r'(\d{2})[-_.](\d{2})[-_.](\d{4})', '%d%m%Y'),
+                # Month_Day_Year
+                (r'(\d{2})[-_.](\d{2})[-_.](\d{4})', '%m%d%Y'),
+                # YearMonthDay (no separators)
+                (r'(\d{4})(\d{2})(\d{2})', '%Y%m%d'),
+                # YearMonth (no separators)
+                (r'(\d{4})(\d{2})$', '%Y%m'),
+                # DayMonthYear (no separators)
+                (r'(\d{2})(\d{2})(\d{4})', '%d%m%Y'),
+                # MonthDayYear (no separators)
+                (r'(\d{2})(\d{2})(\d{4})', '%m%d%Y')
             ]
-            
-            for pattern in date_patterns:
-                match = re.search(pattern, filename)
+
+            for pattern, format_str in date_patterns:
+                match = re.search(pattern, date_str)
                 if match:
-                    date_str1, date_str2 = match.groups()
                     try:
-                        date1 = parse_date(date_str1)
-                        date2 = parse_date(date_str2) if date_str2 else None
-                        return (date1, date2)
+                        date_components = ''.join(match.groups())
+                        return datetime.strptime(date_components, format_str)
                     except ValueError:
                         continue
-            return (None, None)
+            return None
 
-        # Rename files
+        def extract_date(filename: str) -> Optional[datetime]:
+            # Extract all number sequences that could be dates
+            date_candidates = re.findall(r'\d+(?:[-_.]\d+){0,2}', filename)
+            
+            for candidate in date_candidates:
+                parsed_date = parse_date(candidate)
+                if parsed_date:
+                    return parsed_date
+            return None
+
         for file_info in files:
             old_path = file_info.path
             old_filename = file_info.name
             
-            # Extract dates from filename
-            start_date, end_date = extract_dates(old_filename)
+            file_date = extract_date(old_filename)
             
-            if start_date:
-                # Format the start date as yyyy_mm_dd
-                formatted_start_date = start_date.strftime('%Y_%m_%d')
+            if file_date:
+                formatted_date = file_date.strftime('%Y_%m_%d') if file_date.day else file_date.strftime('%Y_%m')
                 
-                # Extract file extension
                 file_name, file_extension = os.path.splitext(old_filename)
-                
-                # Construct new filename
-                if end_date:
-                    formatted_end_date = end_date.strftime('%Y_%m_%d')
-                    new_filename = f"{formatted_start_date}_bis_{formatted_end_date}_{suffix}{file_extension}"
-                else:
-                    new_filename = f"{formatted_start_date}_{suffix}{file_extension}"
-                
-                # Construct new path
+                new_filename = f"{formatted_date}_{suffix}{file_extension}"
                 new_path = f"{directory_path}/{new_filename}"
                 
-                # Rename file
                 dbutils.fs.mv(old_path, new_path)
                 renamed_files.append((old_filename, new_filename))
                 logger.info(f"Renamed: {old_filename} -> {new_filename}")
             else:
-                logger.warning(f"Skipped: {old_filename} (No valid date found in filename)")
+                logger.warning(f"Skipped: {old_filename} (No date found in filename)")
 
         logger.info(f"File renaming completed successfully. {len(renamed_files)} files renamed.")
         return renamed_files
@@ -605,7 +597,7 @@ def rename_files_wrapper(directory_path: str, suffix: str, date_format: Optional
     Args:
         directory_path (str): The path to the directory containing the files to be renamed.
         suffix (str): The suffix to be appended to the renamed files.
-        date_format (Optional[str]): The format of the dates in the filename. If None, it will try to infer the format.
+        date_format (Optional[str]): The format of the date in the filename. If None, it will try to infer the format.
 
     Returns:
         Callable: A function that can be used with DataFrame.transform().
@@ -613,22 +605,19 @@ def rename_files_wrapper(directory_path: str, suffix: str, date_format: Optional
     Example:
         >>> df_transformed = (df
         ...     .transform(some_transformation)
-        ...     .transform(rename_files_wrapper("abfss://container@storage.dfs.core.windows.net/path/to/files", "Reporting"))
+        ...     .transform(rename_files_wrapper("abfss://container@storage.dfs.core.windows.net/path/to/files", "Report"))
         ...     .transform(another_transformation)
         ... )
     """
     def _rename_files(df: DataFrame) -> DataFrame:
         renamed_files = rename_files_with_date_suffix(directory_path, suffix, date_format)
         
-        # Add renamed files information to the DataFrame
         renamed_files_df = spark.createDataFrame(renamed_files, ["old_filename", "new_filename"])
         df = df.crossJoin(renamed_files_df)
         
         return df
     return _rename_files
 
-# Example usage
-# df_with_renamed_files = spark.table("my_table").transform(rename_files_wrapper("abfss://container@storage.dfs.core.windows.net/path/to/files", "Reporting"))
 
 
 ```
