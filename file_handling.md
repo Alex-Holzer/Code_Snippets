@@ -288,84 +288,146 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
 
 
 
-from pyspark.sql import functions as F
-from pyspark.sql.types import DoubleType, StringType
-from typing import Union, List
 
-def is_scientific_notation(value):
-    """Check if a string is in scientific notation."""
-    return F.regexp_extract(value, r'^-?\d+(\.\d+)?[eE][+-]?\d+$', 0) != ''
+-------- DELTA SAVE -------
 
-def convert_scientific_to_standard(value):
-    """Convert scientific notation to standard notation."""
-    return F.when(
-        is_scientific_notation(value),
-        F.regexp_replace(
-            F.format_number(F.cast(value, DoubleType()), 0),
-            r'[,.]',
-            ''
-        )
-    ).otherwise(value)
+from pyspark.sql import DataFrame
+from typing import Optional, List
 
-def handle_non_string_column(df, column):
-    """Cast non-string column to string."""
-    return df.withColumn(column, F.col(column).cast(StringType()))
-
-def convert_scientific_notation(df, columns: Union[str, List[str]]):
+def validate_save_params(
+    df: DataFrame, 
+    path: str, 
+    mode: str, 
+    metastore_path: Optional[str] = None,
+    optimize: bool = False,
+    zorder_by: Optional[List[str]] = None
+) -> None:
     """
-    Convert scientific notation to standard notation in specified column(s).
-    
+    Validate the input parameters for the save_delta_format function.
+
     Args:
-        df (pyspark.sql.DataFrame): Input DataFrame
-        columns (str or list of str): Name(s) of the column(s) to process
-    
-    Returns:
-        pyspark.sql.DataFrame: DataFrame with converted column(s)
-    """
-    if isinstance(columns, str):
-        columns = [columns]
-    
-    for column in columns:
-        df = (df
-            .transform(lambda df: handle_non_string_column(df, column))
-            .withColumn(column, convert_scientific_to_standard(F.col(column)))
-        )
-    
-    return df
+        df (DataFrame): The PySpark DataFrame to be saved.
+        path (str): The path where the DataFrame should be saved in ADLS.
+        mode (str): The save mode ('overwrite', 'append', 'ignore', or 'error').
+        metastore_path (Optional[str]): The path for persisting in the Hive metastore.
+        optimize (bool): Whether to run OPTIMIZE command after saving.
+        zorder_by (Optional[List[str]]): List of columns to ZORDER by.
 
-# Example usage in a transformation pipeline
-def process_dataframe(df, columns_to_convert):
+    Raises:
+        ValueError: If any of the input parameters are invalid.
     """
-    Example of using the convert_scientific_notation function in a transformation pipeline.
+    if not isinstance(df, DataFrame):
+        raise ValueError("Input 'df' must be a PySpark DataFrame.")
     
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("'path' must be a non-empty string.")
+    
+    valid_modes = {'overwrite', 'append', 'ignore', 'error'}
+    if mode not in valid_modes:
+        raise ValueError(f"Invalid mode. Must be one of: {', '.join(valid_modes)}")
+    
+    if metastore_path is not None and (not isinstance(metastore_path, str) or not metastore_path.strip()):
+        raise ValueError("'metastore_path' must be None or a non-empty string.")
+    
+    if not isinstance(optimize, bool):
+        raise ValueError("'optimize' must be a boolean value.")
+    
+    if zorder_by is not None:
+        if not isinstance(zorder_by, list) or not all(isinstance(col, str) for col in zorder_by):
+            raise ValueError("'zorder_by' must be None or a list of strings.")
+        if not set(zorder_by).issubset(df.columns):
+            raise ValueError("All columns in 'zorder_by' must exist in the DataFrame.")
+
+
+from pyspark.sql import DataFrame
+from typing import Optional, List
+from delta.tables import DeltaTable
+
+def save_delta_format(
+    df: DataFrame, 
+    path: str, 
+    mode: str, 
+    metastore_path: Optional[str] = None,
+    optimize: bool = False,
+    zorder_by: Optional[List[str]] = None
+) -> None:
+    """
+    Save a PySpark DataFrame in Delta format to Azure Data Lake Storage with optional optimization.
+
+    This function saves the input DataFrame in Delta format to the specified path in Azure Data Lake Storage.
+    Optionally, it can also persist the data in the Hive metastore and perform OPTIMIZE and ZORDER operations.
+
     Args:
-        df (pyspark.sql.DataFrame): Input DataFrame
-        columns_to_convert (str or list of str): Column(s) to convert
-    
-    Returns:
-        pyspark.sql.DataFrame: Processed DataFrame
-    """
-    return (df
-        .transform(lambda df: convert_scientific_notation(df, columns_to_convert))
-        # Add more transformations as needed
-    )
+        df (DataFrame): The PySpark DataFrame to be saved.
+        path (str): The path where the DataFrame should be saved in ADLS.
+        mode (str): The save mode ('overwrite', 'append', 'ignore', or 'error').
+        metastore_path (Optional[str]): The path for persisting in the Hive metastore.
+        optimize (bool): Whether to run OPTIMIZE command after saving.
+        zorder_by (Optional[List[str]]): List of columns to ZORDER by.
 
-# Test the function
-if __name__ == "__main__":
-    # Create a sample DataFrame
-    data = [
-        ("1.23E+05", "9.9923E+13", "not_scientific"),
-        ("2.5E-02", "1.0", "3.14E+00"),
-        ("normal", "1.23E-10", "6.022E+23")
-    ]
-    df = spark.createDataFrame(data, ["column1", "column2", "column3"])
-    
-    # Process the DataFrame
-    columns_to_convert = ["column1", "column2", "column3"]
-    result_df = process_dataframe(df, columns_to_convert)
-    
-    # Show the result
-    result_df.show(truncate=False)
+    Returns:
+        None
+
+    Example:
+        >>> df = spark.createDataFrame([(1, "Alice"), (2, "Bob")], ["id", "name"])
+        >>> save_delta_format(df, "abfss://container@storage.dfs.core.windows.net/path/to/delta", 
+        ...                   "overwrite", optimize=True, zorder_by=["id"])
+    """
+    try:
+        # Validate input parameters
+        validate_save_params(df, path, mode, metastore_path, optimize, zorder_by)
+
+        # Save the DataFrame in Delta format
+        (df.write
+         .format("delta")
+         .mode(mode)
+         .save(path))
+
+        print(f"Successfully saved DataFrame in Delta format to: {path}")
+
+        # Persist in Hive metastore if metastore_path is provided
+        if metastore_path:
+            table_name = metastore_path.split('.')[-1]
+            
+            # Create or replace the table in the metastore
+            df.write.format("delta").mode("overwrite").saveAsTable(metastore_path)
+            
+            # Ensure the table is pointing to the correct ADLS location
+            spark.sql(f"""
+            ALTER TABLE {metastore_path}
+            SET LOCATION '{path}'
+            """)
+            
+            print(f"Successfully persisted DataFrame in Hive metastore: {metastore_path}")
+
+        # Perform OPTIMIZE and ZORDER if requested
+        if optimize:
+            delta_table = DeltaTable.forPath(spark, path)
+            if zorder_by:
+                print(f"Running OPTIMIZE and ZORDER BY {', '.join(zorder_by)}...")
+                delta_table.optimize().executeZOrderBy(zorder_by)
+            else:
+                print("Running OPTIMIZE...")
+                delta_table.optimize().executeCompaction()
+            print("Optimization completed successfully.")
+
+    except Exception as e:
+        print(f"❌ Error saving DataFrame: {str(e)}")
+        raise
+
+def save_delta_wrapper(
+    path: str, 
+    mode: str, 
+    metastore_path: Optional[str] = None,
+    optimize: bool = False,
+    zorder_by: Optional[List[str]] = None
+):
+    def _save_delta(df: DataFrame) -> DataFrame:
+        save_delta_format(df, path, mode, metastore_path, optimize, zorder_by)
+        return df
+    return _save_delta
+
+
 
 
 
