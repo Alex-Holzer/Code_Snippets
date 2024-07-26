@@ -566,4 +566,92 @@ def get_delta_table(database: str, table_name: str, columns: Optional[List[str]]
 #     df.show()
 
 
+
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import col
+from typing import List, Optional
+
+def validate_conditions(conditions: List[str]) -> None:
+    """
+    Validate the list of conditions.
+
+    Args:
+        conditions (List[str]): List of condition strings.
+
+    Raises:
+        ValueError: If conditions is not a list or contains non-string elements.
+    """
+    if not isinstance(conditions, list):
+        raise ValueError("Conditions must be a list.")
+    if not all(isinstance(condition, str) for condition in conditions):
+        raise ValueError("All conditions must be strings.")
+
+def apply_filters(df: DataFrame, conditions: List[str]) -> DataFrame:
+    """
+    Apply the list of conditions as filters to the DataFrame.
+
+    Args:
+        df (DataFrame): The input DataFrame.
+        conditions (List[str]): List of condition strings.
+
+    Returns:
+        DataFrame: The filtered DataFrame.
+    """
+    for condition in conditions:
+        df = df.filter(condition)
+    return df
+
+def filter_delta_table(df: DataFrame, conditions: List[str]) -> Optional[DataFrame]:
+    """
+    Filter a Delta table DataFrame according to a list of conditions.
+
+    This function takes a DataFrame (presumably obtained from a Delta table)
+    and applies a list of filter conditions to it. Each condition in the list
+    should be a valid SQL-like condition string.
+
+    Args:
+        df (DataFrame): The input DataFrame to filter.
+        conditions (List[str]): List of condition strings to apply as filters.
+
+    Returns:
+        Optional[DataFrame]: The filtered DataFrame, or None if an error occurs.
+
+    Example:
+        >>> conditions = [
+        ...     "VORGANG5_TYP_MOP_TYPE_NAME LIKE '%MLNeuAV%'",
+        ...     "VORGANG5_TYP_MOP_TYPE_NAME LIKE '%PBLNeu%'",
+        ...     "VORGANG5_TYP_MOP_TYPE_NAME LIKE '%MLNeuPVLV%'",
+        ... ]
+        >>> df = get_delta_table("my_database", "my_table")
+        >>> if df is not None:
+        ...     filtered_df = filter_delta_table(df, conditions)
+        ...     if filtered_df is not None:
+        ...         filtered_df.show()
+    """
+    try:
+        validate_conditions(conditions)
+        return apply_filters(df, conditions)
+    except ValueError as e:
+        print(f"Input validation error: {e}")
+        return None
+    except Exception as e:
+        print(f"Error applying filters: {e}")
+        return None
+
+# Example usage
+# conditions = [
+#     "VORGANG5_TYP_MOP_TYPE_NAME LIKE '%MLNeuAV%'",
+#     "VORGANG5_TYP_MOP_TYPE_NAME LIKE '%PBLNeu%'",
+#     "VORGANG5_TYP_MOP_TYPE_NAME LIKE '%MLNeuPVLV%'",
+# ]
+# df = get_delta_table("my_database", "my_table")
+# if df is not None:
+#     filtered_df = filter_delta_table(df, conditions)
+#     if filtered_df is not None:
+#         filtered_df.show()
+
+
+
+
+
 ```
