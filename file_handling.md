@@ -166,5 +166,56 @@ def check_path_exists(path: str) -> bool:
 # print(f"The path {'exists' if exists else 'does not exist'}")
 
 
+import fnmatch
+from typing import List, Dict
+
+def list_files_by_pattern(directory: str, pattern: str) -> List[Dict[str, str]]:
+    """
+    List all files in a specified directory that match a given pattern.
+
+    Args:
+        directory (str): The full path to the directory in the data lake storage.
+        pattern (str): The pattern to match against file names. Supports wildcards (* and ?).
+
+    Returns:
+        List[Dict[str, str]]: A list of dictionaries, each containing 'path' and 'name' 
+        for each file that matches the pattern.
+
+    Raises:
+        ValueError: If the directory or pattern is empty or None.
+
+    Example:
+        >>> directory = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW"
+        >>> pattern = "*.csv"
+        >>> files = list_files_by_pattern(directory, pattern)
+        >>> for file in files:
+        ...     print(f"Name: {file['name']}, Path: {file['path']}")
+    """
+    if not directory or not pattern:
+        raise ValueError("directory and pattern cannot be empty or None")
+
+    def _match_pattern(name: str, pattern: str) -> bool:
+        return fnmatch.fnmatch(name.lower(), pattern.lower())
+
+    try:
+        all_files = dbutils.fs.ls(directory)
+        matched_files = [
+            {"name": file.name, "path": file.path}
+            for file in all_files
+            if not file.isDir() and _match_pattern(file.name, pattern)
+        ]
+        return matched_files
+    except Exception as e:
+        print(f"An error occurred while listing files: {str(e)}")
+        return []
+
+# Example usage
+# directory = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW"
+# pattern = "*.csv"
+# files = list_files_by_pattern(directory, pattern)
+# for file in files:
+#     print(f"Name: {file['name']}, Path: {file['path']}")
+
+
 
 ```
