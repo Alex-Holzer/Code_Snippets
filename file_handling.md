@@ -218,4 +218,63 @@ def list_files_by_pattern(directory: str, pattern: str) -> List[Dict[str, str]]:
 
 
 
+
+
+import pandas as pd
+from typing import Optional, Dict, Any
+
+def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, **kwargs: Any) -> Optional[pyspark.sql.DataFrame]:
+    """
+    Extract data from a specified sheet of an XLSX file and convert it to a PySpark DataFrame.
+
+    Args:
+        file_path (str): The full path to the XLSX file in the data lake storage.
+        sheet_name (str, optional): The name or index of the sheet to extract. 
+                                    If None, the first sheet is used.
+        **kwargs: Additional keyword arguments to pass to pd.read_excel().
+                  Common options include:
+                  - header (int, list of int, default 0): Row (0-indexed) to use for the column labels.
+                  - names (array-like, optional): List of column names to use.
+                  - usecols (str, list-like, or callable, optional): Columns to read.
+                  - skiprows (list-like, int, or callable, optional): Line numbers to skip.
+                  - nrows (int, optional): Number of rows to read.
+
+    Returns:
+        pyspark.sql.DataFrame or None: A PySpark DataFrame containing the data from the specified sheet,
+                                       or None if an error occurs.
+
+    Raises:
+        ValueError: If the file_path is empty or None.
+
+    Example:
+        >>> file_path = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW/data.xlsx"
+        >>> df = extract_xlsx_to_dataframe(file_path, sheet_name="Sheet1", header=0, usecols="A:C")
+        >>> if df is not None:
+        ...     df.show()
+    """
+    if not file_path:
+        raise ValueError("file_path cannot be empty or None")
+
+    try:
+        # Read the XLSX file into a pandas DataFrame
+        pdf = pd.read_excel(file_path, sheet_name=sheet_name, **kwargs)
+
+        # Convert pandas DataFrame to PySpark DataFrame
+        df = spark.createDataFrame(pdf)
+        
+        return df
+    except Exception as e:
+        print(f"An error occurred while extracting XLSX file: {str(e)}")
+        return None
+
+# Example usage
+# file_path = "abfss://prod@eudldegikoproddl.dfs.core.windows.net/PROD/usecases/AnalyticsUW/data.xlsx"
+# df = extract_xlsx_to_dataframe(file_path, sheet_name="Sheet1", header=0, usecols="A:C")
+# if df is not None:
+#     df.show()
+
+
+
+
+
 ```
