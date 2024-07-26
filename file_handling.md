@@ -479,144 +479,91 @@ def save_delta_wrapper(
     return _save_delta
 
 
---- rename files --------
+--- delta tables  --------
 
-from pyspark.sql import SparkSession, DataFrame
-from typing import Optional, List, Tuple
-import re
-from datetime import datetime
-import logging
-import os
-import time
+from pyspark.sql import DataFrame
 from pyspark.sql.utils import AnalysisException
+from typing import Optional, List, Union
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format: Optional[str] = None, max_retries: int = 3, retry_delay: int = 5) -> List[Tuple[str, str]]:
+def validate_input(database: str, table_name: str, columns: Optional[List[str]] = None) -> None:
     """
-    Rename files in the specified Azure Data Lake Storage directory by extracting the date
-    from the filename, appending a suffix, and preserving the file extension.
+    Validate the input parameters for the Delta table extraction.
 
     Args:
-        directory_path (str): The path to the directory containing the files to be renamed.
-        suffix (str): The suffix to be appended to the renamed files.
-        date_format (Optional[str]): The format of the date in the filename. If None, it will try to infer the format.
-        max_retries (int): Maximum number of retries for file operations.
-        retry_delay (int): Delay in seconds between retries.
-
-    Returns:
-        List[Tuple[str, str]]: A list of tuples containing the old and new filenames.
+        database (str): The name of the database.
+        table_name (str): The name of the table.
+        columns (Optional[List[str]]): List of column names to extract.
 
     Raises:
-        ValueError: If the directory path is invalid or if no files are found.
+        ValueError: If inputs are invalid.
     """
-    try:
-        if not directory_path or not isinstance(directory_path, str):
-            raise ValueError("Invalid directory path")
-        if not suffix or not isinstance(suffix, str):
-            raise ValueError("Invalid suffix")
+    if not isinstance(database, str) or not database.strip():
+        raise ValueError("Database name must be a non-empty string.")
+    if not isinstance(table_name, str) or not table_name.strip():
+        raise ValueError("Table name must be a non-empty string.")
+    if columns is not None:
+        if not isinstance(columns, list) or not all(isinstance(col, str) for col in columns):
+            raise ValueError("Columns must be a list of strings.")
 
-        files = dbutils.fs.ls(directory_path)
-        if not files:
-            raise ValueError(f"No files found in the directory: {directory_path}")
-
-        renamed_files = []
-
-        def parse_date(date_str: str) -> Optional[datetime]:
-            date_patterns = [
-                (r'(\d{4})[-_.](\d{2})$', '%Y%m'),
-                (r'(\d{4})[-_.](\d{2})[-_.](\d{2})', '%Y%m%d'),
-                (r'(\d{2})[-_.](\d{2})[-_.](\d{4})', '%d%m%Y'),
-                (r'(\d{2})[-_.](\d{2})[-_.](\d{4})', '%m%d%Y'),
-                (r'(\d{4})(\d{2})(\d{2})', '%Y%m%d'),
-                (r'(\d{4})(\d{2})$', '%Y%m'),
-                (r'(\d{2})(\d{2})(\d{4})', '%d%m%Y'),
-                (r'(\d{2})(\d{2})(\d{4})', '%m%d%Y')
-            ]
-
-            for pattern, format_str in date_patterns:
-                match = re.search(pattern, date_str)
-                if match:
-                    try:
-                        date_components = ''.join(match.groups())
-                        return datetime.strptime(date_components, format_str)
-                    except ValueError:
-                        continue
-            return None
-
-        def extract_date(filename: str) -> Optional[datetime]:
-            date_candidates = re.findall(r'\d+(?:[-_.]\d+){0,2}', filename)
-            
-            for candidate in date_candidates:
-                parsed_date = parse_date(candidate)
-                if parsed_date:
-                    return parsed_date
-            return None
-
-        def rename_file_with_retry(old_path: str, new_path: str, max_retries: int, retry_delay: int) -> bool:
-            for attempt in range(max_retries):
-                try:
-                    dbutils.fs.mv(old_path, new_path)
-                    return True
-                except Exception as e:
-                    if "The condition specified using HTTP conditional header(s) is not met" in str(e):
-                        logger.warning(f"Rename attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                    else:
-                        raise
-            return False
-
-        for file_info in files:
-            old_path = file_info.path
-            old_filename = file_info.name
-            
-            file_date = extract_date(old_filename)
-            
-            if file_date:
-                formatted_date = file_date.strftime('%Y_%m_%d') if file_date.day else file_date.strftime('%Y_%m')
-                
-                file_name, file_extension = os.path.splitext(old_filename)
-                new_filename = f"{formatted_date}_{suffix}{file_extension}"
-                new_path = f"{directory_path}/{new_filename}"
-                
-                if rename_file_with_retry(old_path, new_path, max_retries, retry_delay):
-                    renamed_files.append((old_filename, new_filename))
-                    logger.info(f"Renamed: {old_filename} -> {new_filename}")
-                else:
-                    logger.error(f"Failed to rename after {max_retries} attempts: {old_filename}")
-            else:
-                logger.warning(f"Skipped: {old_filename} (No date found in filename)")
-
-        logger.info(f"File renaming completed successfully. {len(renamed_files)} files renamed.")
-        return renamed_files
-
-    except Exception as e:
-        logger.error(f"Error renaming files: {str(e)}")
-        raise
-
-def rename_files_wrapper(directory_path: str, suffix: str, date_format: Optional[str] = None, max_retries: int = 3, retry_delay: int = 5):
+def construct_table_path(database: str, table_name: str) -> str:
     """
-    Wrapper function to use rename_files_with_date_suffix with DataFrame.transform().
+    Construct the full table path for the Delta table.
 
     Args:
-        directory_path (str): The path to the directory containing the files to be renamed.
-        suffix (str): The suffix to be appended to the renamed files.
-        date_format (Optional[str]): The format of the date in the filename. If None, it will try to infer the format.
-        max_retries (int): Maximum number of retries for file operations.
-        retry_delay (int): Delay in seconds between retries.
+        database (str): The name of the database.
+        table_name (str): The name of the table.
 
     Returns:
-        Callable: A function that can be used with DataFrame.transform().
+        str: The full table path.
     """
-    def _rename_files(df: DataFrame) -> DataFrame:
-        renamed_files = rename_files_with_date_suffix(directory_path, suffix, date_format, max_retries, retry_delay)
+    return f"{database}.{table_name}"
+
+def get_delta_table(database: str, table_name: str, columns: Optional[List[str]] = None) -> Optional[DataFrame]:
+    """
+    Get a Delta table or specific columns from the Hive metastore in Databricks.
+
+    This function validates the input, constructs the table path,
+    and reads the Delta table or specified columns from the Hive metastore
+    using the built-in spark session in Databricks.
+
+    Args:
+        database (str): The name of the database containing the table.
+        table_name (str): The name of the table to extract.
+        columns (Optional[List[str]]): List of column names to extract. 
+                                       If None, all columns are extracted.
+
+    Returns:
+        Optional[DataFrame]: The extracted Delta table (or specified columns) as a DataFrame,
+                             or None if an error occurs.
+
+    Example:
+        >>> # Get entire table
+        >>> df = get_delta_table("my_database", "my_table")
+        >>> # Get specific columns
+        >>> df = get_delta_table("my_database", "my_table", ["column1", "column2"])
+        >>> if df is not None:
+        ...     df.show()
+    """
+    try:
+        validate_input(database, table_name, columns)
+        full_table_path = construct_table_path(database, table_name)
         
-        renamed_files_df = spark.createDataFrame(renamed_files, ["old_filename", "new_filename"])
-        df = df.crossJoin(renamed_files_df)
-        
-        return df
-    return _rename_files
+        if columns:
+            return spark.table(full_table_path).select(*columns)
+        else:
+            return spark.table(full_table_path)
+    
+    except ValueError as e:
+        print(f"Input validation error: {e}")
+        return None
+    except AnalysisException as e:
+        print(f"Error reading Delta table: {e}")
+        return None
+
+# Example usage
+# df = get_delta_table("hive_metastore", "my_table", ["column1", "column2"])
+# if df is not None:
+#     df.show()
 
 
 ```
