@@ -288,4 +288,80 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
 
 
 
+from pyspark.sql import functions as F
+from pyspark.sql.types import DoubleType, StringType
+
+# Helper Functions
+def is_scientific_notation(value):
+    """Check if a string is in scientific notation."""
+    return F.regexp_extract(value, r'^-?\d+(\.\d+)?[eE][+-]?\d+$', 0) != ''
+
+def convert_scientific_to_standard(value):
+    """Convert scientific notation to standard notation."""
+    return F.when(
+        is_scientific_notation(value),
+        F.regexp_replace(
+            F.format_number(F.cast(value, DoubleType()), 0),
+            r'[,.]',
+            ''
+        )
+    ).otherwise(value)
+
+def handle_non_string_column(df, column):
+    """Cast non-string column to string."""
+    return df.withColumn(column, F.col(column).cast(StringType()))
+
+# Main Function
+def convert_scientific_notation(df, column):
+    """
+    Convert scientific notation to standard notation in a specified column.
+    
+    Args:
+        df (pyspark.sql.DataFrame): Input DataFrame
+        column (str): Name of the column to process
+    
+    Returns:
+        pyspark.sql.DataFrame: DataFrame with converted column
+    """
+    return (df
+        .transform(lambda df: handle_non_string_column(df, column))
+        .withColumn(column, convert_scientific_to_standard(F.col(column)))
+    )
+
+# Example Usage
+def process_dataframe(df):
+    """
+    Example of using the convert_scientific_notation function in a transformation pipeline.
+    
+    Args:
+        df (pyspark.sql.DataFrame): Input DataFrame
+    
+    Returns:
+        pyspark.sql.DataFrame: Processed DataFrame
+    """
+    return (df
+        .transform(lambda df: convert_scientific_notation(df, "column1"))
+        .transform(lambda df: convert_scientific_notation(df, "column2"))
+        # Add more transformations as needed
+    )
+
+# Test the function
+if __name__ == "__main__":
+    # Create a sample DataFrame
+    data = [("1.23E+05", "normal"), ("9.9923E+13", "2.5E-02"), ("not_scientific", "1.0")]
+    df = spark.createDataFrame(data, ["column1", "column2"])
+    
+    # Process the DataFrame
+    result_df = process_dataframe(df)
+    
+    # Show the result
+    result_df.show()
+
+
+
+
+
+
+
+
 ```
