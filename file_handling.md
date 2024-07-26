@@ -218,18 +218,17 @@ def list_files_by_pattern(directory: str, pattern: str) -> List[Dict[str, str]]:
 
 
 
-
-
 import pandas as pd
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Any, Union
 from pyspark.sql import DataFrame
+from io import BytesIO
 
 def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, **kwargs: Any) -> Optional[DataFrame]:
     """
-    Extract data from a specified sheet of an XLSX file and convert it to a PySpark DataFrame.
+    Extract data from a specified sheet of an XLSX file in ABFS and convert it to a PySpark DataFrame.
 
     Args:
-        file_path (str): The full path to the XLSX file in the data lake storage.
+        file_path (str): The full path to the XLSX file in the ABFS storage.
         sheet_name (str, optional): The name or index of the sheet to extract. 
                                     If None, the first sheet is used.
         **kwargs: Additional keyword arguments to pass to pd.read_excel().
@@ -257,8 +256,14 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
         raise ValueError("file_path cannot be empty or None")
 
     try:
+        # Read the file content using dbutils
+        file_content = dbutils.fs.read(file_path, -1)  # -1 reads the entire file
+        
+        # Create a BytesIO object from the file content
+        bytes_io = BytesIO(file_content.encode())
+        
         # Read the XLSX file into a pandas DataFrame
-        pdf = pd.read_excel(file_path, sheet_name=sheet_name, **kwargs)
+        pdf = pd.read_excel(bytes_io, sheet_name=sheet_name, **kwargs)
 
         # Convert pandas DataFrame to PySpark DataFrame
         df = spark.createDataFrame(pdf)
