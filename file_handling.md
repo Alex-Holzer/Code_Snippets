@@ -221,9 +221,10 @@ def list_files_by_pattern(directory: str, pattern: str) -> List[Dict[str, str]]:
 
 
 import pandas as pd
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
+from pyspark.sql import DataFrame
 
-def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, **kwargs: Any) -> Optional[pyspark.sql.DataFrame]:
+def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, **kwargs: Any) -> Optional[DataFrame]:
     """
     Extract data from a specified sheet of an XLSX file and convert it to a PySpark DataFrame.
 
@@ -240,8 +241,8 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
                   - nrows (int, optional): Number of rows to read.
 
     Returns:
-        pyspark.sql.DataFrame or None: A PySpark DataFrame containing the data from the specified sheet,
-                                       or None if an error occurs.
+        DataFrame or None: A PySpark DataFrame containing the data from the specified sheet,
+                           or None if an error occurs.
 
     Raises:
         ValueError: If the file_path is empty or None.
@@ -272,7 +273,6 @@ def extract_xlsx_to_dataframe(file_path: str, sheet_name: Optional[str] = None, 
 # df = extract_xlsx_to_dataframe(file_path, sheet_name="Sheet1", header=0, usecols="A:C")
 # if df is not None:
 #     df.show()
-
 
 
 
