@@ -487,11 +487,13 @@ import re
 from datetime import datetime
 import logging
 import os
+import time
+from pyspark.sql.utils import AnalysisException
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format: Optional[str] = None) -> List[Tuple[str, str]]:
+def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format: Optional[str] = None, max_retries: int = 3, retry_delay: int = 5) -> List[Tuple[str, str]]:
     """
     Rename files in the specified Azure Data Lake Storage directory by extracting the date
     from the filename, appending a suffix, and preserving the file extension.
@@ -500,17 +502,14 @@ def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format:
         directory_path (str): The path to the directory containing the files to be renamed.
         suffix (str): The suffix to be appended to the renamed files.
         date_format (Optional[str]): The format of the date in the filename. If None, it will try to infer the format.
+        max_retries (int): Maximum number of retries for file operations.
+        retry_delay (int): Delay in seconds between retries.
 
     Returns:
         List[Tuple[str, str]]: A list of tuples containing the old and new filenames.
 
     Raises:
         ValueError: If the directory path is invalid or if no files are found.
-
-    Example:
-        >>> renamed_files = rename_files_with_date_suffix("abfss://container@storage.dfs.core.windows.net/path/to/files", "Report")
-        >>> for old_name, new_name in renamed_files:
-        ...     print(f"Renamed: {old_name} -> {new_name}")
     """
     try:
         if not directory_path or not isinstance(directory_path, str):
@@ -526,21 +525,13 @@ def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format:
 
         def parse_date(date_str: str) -> Optional[datetime]:
             date_patterns = [
-                # Year_Month
                 (r'(\d{4})[-_.](\d{2})$', '%Y%m'),
-                # Year_Month_Day
                 (r'(\d{4})[-_.](\d{2})[-_.](\d{2})', '%Y%m%d'),
-                # Day_Month_Year
                 (r'(\d{2})[-_.](\d{2})[-_.](\d{4})', '%d%m%Y'),
-                # Month_Day_Year
                 (r'(\d{2})[-_.](\d{2})[-_.](\d{4})', '%m%d%Y'),
-                # YearMonthDay (no separators)
                 (r'(\d{4})(\d{2})(\d{2})', '%Y%m%d'),
-                # YearMonth (no separators)
                 (r'(\d{4})(\d{2})$', '%Y%m'),
-                # DayMonthYear (no separators)
                 (r'(\d{2})(\d{2})(\d{4})', '%d%m%Y'),
-                # MonthDayYear (no separators)
                 (r'(\d{2})(\d{2})(\d{4})', '%m%d%Y')
             ]
 
@@ -555,7 +546,6 @@ def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format:
             return None
 
         def extract_date(filename: str) -> Optional[datetime]:
-            # Extract all number sequences that could be dates
             date_candidates = re.findall(r'\d+(?:[-_.]\d+){0,2}', filename)
             
             for candidate in date_candidates:
@@ -563,6 +553,19 @@ def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format:
                 if parsed_date:
                     return parsed_date
             return None
+
+        def rename_file_with_retry(old_path: str, new_path: str, max_retries: int, retry_delay: int) -> bool:
+            for attempt in range(max_retries):
+                try:
+                    dbutils.fs.mv(old_path, new_path)
+                    return True
+                except Exception as e:
+                    if "The condition specified using HTTP conditional header(s) is not met" in str(e):
+                        logger.warning(f"Rename attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                    else:
+                        raise
+            return False
 
         for file_info in files:
             old_path = file_info.path
@@ -577,9 +580,11 @@ def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format:
                 new_filename = f"{formatted_date}_{suffix}{file_extension}"
                 new_path = f"{directory_path}/{new_filename}"
                 
-                dbutils.fs.mv(old_path, new_path)
-                renamed_files.append((old_filename, new_filename))
-                logger.info(f"Renamed: {old_filename} -> {new_filename}")
+                if rename_file_with_retry(old_path, new_path, max_retries, retry_delay):
+                    renamed_files.append((old_filename, new_filename))
+                    logger.info(f"Renamed: {old_filename} -> {new_filename}")
+                else:
+                    logger.error(f"Failed to rename after {max_retries} attempts: {old_filename}")
             else:
                 logger.warning(f"Skipped: {old_filename} (No date found in filename)")
 
@@ -590,7 +595,7 @@ def rename_files_with_date_suffix(directory_path: str, suffix: str, date_format:
         logger.error(f"Error renaming files: {str(e)}")
         raise
 
-def rename_files_wrapper(directory_path: str, suffix: str, date_format: Optional[str] = None):
+def rename_files_wrapper(directory_path: str, suffix: str, date_format: Optional[str] = None, max_retries: int = 3, retry_delay: int = 5):
     """
     Wrapper function to use rename_files_with_date_suffix with DataFrame.transform().
 
@@ -598,26 +603,20 @@ def rename_files_wrapper(directory_path: str, suffix: str, date_format: Optional
         directory_path (str): The path to the directory containing the files to be renamed.
         suffix (str): The suffix to be appended to the renamed files.
         date_format (Optional[str]): The format of the date in the filename. If None, it will try to infer the format.
+        max_retries (int): Maximum number of retries for file operations.
+        retry_delay (int): Delay in seconds between retries.
 
     Returns:
         Callable: A function that can be used with DataFrame.transform().
-
-    Example:
-        >>> df_transformed = (df
-        ...     .transform(some_transformation)
-        ...     .transform(rename_files_wrapper("abfss://container@storage.dfs.core.windows.net/path/to/files", "Report"))
-        ...     .transform(another_transformation)
-        ... )
     """
     def _rename_files(df: DataFrame) -> DataFrame:
-        renamed_files = rename_files_with_date_suffix(directory_path, suffix, date_format)
+        renamed_files = rename_files_with_date_suffix(directory_path, suffix, date_format, max_retries, retry_delay)
         
         renamed_files_df = spark.createDataFrame(renamed_files, ["old_filename", "new_filename"])
         df = df.crossJoin(renamed_files_df)
         
         return df
     return _rename_files
-
 
 
 ```
