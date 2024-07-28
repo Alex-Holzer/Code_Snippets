@@ -141,4 +141,63 @@ def transform_dataframe(df: DataFrame, new_column: Optional[str] = None) -> Data
     return df.transform(lambda d: apply_mapping(d, "category", mapping_dict, new_column))
 
 
+---- run multiple notebooks
+
+from typing import List, Dict
+import re
+
+def run_notebooks_in_folder_sequentially(folder_path: str) -> List[Dict[str, str]]:
+    """
+    Run all notebooks in a specified folder sequentially.
+
+    Args:
+        folder_path (str): The path to the folder containing the notebooks.
+
+    Returns:
+        List[Dict[str, str]]: A list of dictionaries containing the results of each notebook run.
+
+    Example:
+        >>> folder_path = "/path/to/your/folder"
+        >>> results = run_notebooks_in_folder_sequentially(folder_path)
+        >>> for result in results:
+        ...     print(f"Notebook: {result['notebook']}, Status: {result['status']}, Result: {result['result']}")
+
+    Note:
+        This function is designed to run in Databricks environment.
+    """
+    def natural_sort_key(s):
+        return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', s)]
+
+    notebooks = dbutils.fs.ls(folder_path)
+    notebooks.sort(key=lambda x: natural_sort_key(x.name))
+
+    results = []
+
+    for notebook in notebooks:
+        if notebook.path.endswith(".ipynb"):
+            notebook_result = {
+                "notebook": notebook.path,
+                "status": "Not Run",
+                "result": None
+            }
+            print(f"Starting notebook: {notebook.path}")
+            try:
+                notebook_result["result"] = dbutils.notebook.run(notebook.path, timeout_seconds=0)
+                notebook_result["status"] = "Completed"
+                print(f"Notebook {notebook.path} completed with result: {notebook_result['result']}")
+            except Exception as e:
+                notebook_result["status"] = "Error"
+                notebook_result["result"] = str(e)
+                print(f"Error running notebook {notebook.path}: {str(e)}")
+            finally:
+                results.append(notebook_result)
+
+    return results
+
+# Example usage
+# folder_path = "/path/to/your/folder"
+# results = run_notebooks_in_folder_sequentially(folder_path)
+# for result in results:
+#     print(f"Notebook: {result['notebook']}, Status: {result['status']}, Result: {result['result']}")
+
 ```
