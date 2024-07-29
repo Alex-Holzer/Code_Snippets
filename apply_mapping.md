@@ -18,10 +18,12 @@ def validate_input(df: DataFrame, column_name: str, prefix_string: str) -> None:
     """
     if not isinstance(df, DataFrame):
         raise ValueError("Input must be a PySpark DataFrame.")
+    if not isinstance(column_name, str) or not column_name.strip():
+        raise ValueError("Column name must be a non-empty string.")
     if column_name not in df.columns:
         raise ValueError(f"Column '{column_name}' not found in the DataFrame.")
-    if not isinstance(prefix_string, str):
-        raise ValueError("prefix_string must be a string.")
+    if not isinstance(prefix_string, str) or not prefix_string.strip():
+        raise ValueError("Prefix string must be a non-empty string.")
 
 def add_prefix_to_column(df: DataFrame, column_name: str, prefix_string: str) -> DataFrame:
     """
@@ -38,7 +40,6 @@ def add_prefix_to_column(df: DataFrame, column_name: str, prefix_string: str) ->
     return df.withColumn(column_name, F.concat(F.lit(prefix_string), F.col(column_name)))
 
 
-
 from pyspark.sql import DataFrame
 from typing import Callable, Any
 
@@ -52,11 +53,14 @@ def add_prefix_string_to_column(df: DataFrame, column_name: str, prefix_string: 
 
     Args:
         df (DataFrame): The input PySpark DataFrame.
-        column_name (str): The name of the column to be modified.
-        prefix_string (str): The string to be added as a prefix to the column values.
+        column_name (str): The name of the column to be modified. Must be a non-empty string.
+        prefix_string (str): The string to be added as a prefix to the column values. Must be a non-empty string.
 
     Returns:
         DataFrame: The DataFrame with the modified column.
+
+    Raises:
+        ValueError: If the input parameters are invalid.
 
     Example:
         >>> df = spark.createDataFrame([("Apple",), ("Banana",)], ["fruit"])
@@ -88,4 +92,10 @@ def transform(self: DataFrame, f: Callable[..., DataFrame], *args: Any, **kwargs
     return f(self, *args, **kwargs)
 
 DataFrame.transform = transform
+
+
+
+
+
+
 ```
