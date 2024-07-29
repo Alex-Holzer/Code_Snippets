@@ -6,12 +6,12 @@ from typing import Any
 
 def validate_input(df: DataFrame, column_name: str, prefix_string: str) -> None:
     """
-    Validates the input parameters for the prefix_string_to_column function.
+    Validates the input parameters for the add_prefix_string_to_column function.
     
     Args:
         df (DataFrame): The input DataFrame.
         column_name (str): The name of the column to be modified.
-        prefix_string (str): The string to be prefixed.
+        prefix_string (str): The string to be added as a prefix.
     
     Raises:
         ValueError: If the input parameters are invalid.
@@ -30,7 +30,7 @@ def add_prefix_to_column(df: DataFrame, column_name: str, prefix_string: str) ->
     Args:
         df (DataFrame): The input DataFrame.
         column_name (str): The name of the column to be modified.
-        prefix_string (str): The string to be prefixed.
+        prefix_string (str): The string to be added as a prefix.
     
     Returns:
         DataFrame: The DataFrame with the modified column.
@@ -38,12 +38,13 @@ def add_prefix_to_column(df: DataFrame, column_name: str, prefix_string: str) ->
     return df.withColumn(column_name, F.concat(F.lit(prefix_string), F.col(column_name)))
 
 
+
 from pyspark.sql import DataFrame
 from typing import Callable, Any
 
-def prefix_string_to_column(df: DataFrame, column_name: str, prefix_string: str) -> DataFrame:
+def add_prefix_string_to_column(df: DataFrame, column_name: str, prefix_string: str) -> DataFrame:
     """
-    Appends a prefix string to the specified string column in a PySpark DataFrame.
+    Adds a prefix string to the specified string column in a PySpark DataFrame.
 
     This function validates the input, adds the prefix to the specified column,
     and returns the modified DataFrame. It can be used standalone or as part of
@@ -52,14 +53,14 @@ def prefix_string_to_column(df: DataFrame, column_name: str, prefix_string: str)
     Args:
         df (DataFrame): The input PySpark DataFrame.
         column_name (str): The name of the column to be modified.
-        prefix_string (str): The string to be prefixed to the column values.
+        prefix_string (str): The string to be added as a prefix to the column values.
 
     Returns:
         DataFrame: The DataFrame with the modified column.
 
     Example:
         >>> df = spark.createDataFrame([("Apple",), ("Banana",)], ["fruit"])
-        >>> result = prefix_string_to_column(df, "fruit", "Weblife: ")
+        >>> result = add_prefix_string_to_column(df, "fruit", "Weblife: ")
         >>> result.show()
         +---------------+
         |          fruit|
@@ -87,8 +88,4 @@ def transform(self: DataFrame, f: Callable[..., DataFrame], *args: Any, **kwargs
     return f(self, *args, **kwargs)
 
 DataFrame.transform = transform
-
-
-
-
 ```
