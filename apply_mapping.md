@@ -1,203 +1,94 @@
 ```python
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import Any
+
+def validate_input(df: DataFrame, column_name: str, prefix_string: str) -> None:
+    """
+    Validates the input parameters for the prefix_string_to_column function.
+    
+    Args:
+        df (DataFrame): The input DataFrame.
+        column_name (str): The name of the column to be modified.
+        prefix_string (str): The string to be prefixed.
+    
+    Raises:
+        ValueError: If the input parameters are invalid.
+    """
+    if not isinstance(df, DataFrame):
+        raise ValueError("Input must be a PySpark DataFrame.")
+    if column_name not in df.columns:
+        raise ValueError(f"Column '{column_name}' not found in the DataFrame.")
+    if not isinstance(prefix_string, str):
+        raise ValueError("prefix_string must be a string.")
+
+def add_prefix_to_column(df: DataFrame, column_name: str, prefix_string: str) -> DataFrame:
+    """
+    Adds a prefix string to the specified column.
+    
+    Args:
+        df (DataFrame): The input DataFrame.
+        column_name (str): The name of the column to be modified.
+        prefix_string (str): The string to be prefixed.
+    
+    Returns:
+        DataFrame: The DataFrame with the modified column.
+    """
+    return df.withColumn(column_name, F.concat(F.lit(prefix_string), F.col(column_name)))
 
 
 from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
-from pyspark.sql.types import StringType
-from typing import Dict, Any, Callable, Optional
+from typing import Callable, Any
 
-def create_condition_function(condition: Any) -> Callable:
+def prefix_string_to_column(df: DataFrame, column_name: str, prefix_string: str) -> DataFrame:
     """
-    Create a condition function based on the provided condition.
-    
-    Args:
-        condition (Any): The condition to be evaluated.
-    
-    Returns:
-        Callable: A function that evaluates the condition.
-    
-    Examples:
-        >>> create_condition_function("constant")
-        <function create_condition_function.<locals>.<lambda>>
-        
-        >>> create_condition_function(lambda col: col > 5)
-        <function create_condition_function.<locals>.<lambda>>
-        
-        >>> create_condition_function(10)
-        <function create_condition_function.<locals>.<lambda>>
-    """
-    if isinstance(condition, str):
-        return lambda col: F.lit(condition)
-    elif callable(condition):
-        return condition
-    else:
-        return lambda col: F.lit(condition)
+    Appends a prefix string to the specified string column in a PySpark DataFrame.
 
-def apply_mapping(
-    df: DataFrame, 
-    column: str, 
-    mapping_dict: Dict[Any, Any], 
-    new_column: Optional[str] = None
-) -> DataFrame:
-    """
-    Apply value mapping to a DataFrame column based on a dictionary of conditions.
-    
-    Args:
-        df (DataFrame): The input DataFrame.
-        column (str): The name of the column to apply the mapping to.
-        mapping_dict (Dict[Any, Any]): A dictionary where keys are the new values and values are the conditions.
-        new_column (Optional[str]): If provided, creates a new column with this name instead of modifying the existing column.
-    
-    Returns:
-        DataFrame: The DataFrame with the mapped values.
-    
-    Examples:
-        >>> df = spark.createDataFrame([("apple", "red"), ("banana", "yellow")], ["fruit", "color"])
-        >>> mapping_dict = {"red fruit": F.col("color") == "red", "yellow fruit": F.col("color") == "yellow"}
-        
-        # Modifying existing column
-        >>> result1 = apply_mapping(df, "fruit", mapping_dict)
-        >>> result1.show()
-        +----------+------+
-        |     fruit| color|
-        +----------+------+
-        | red fruit|   red|
-        |yellow fruit|yellow|
-        +----------+------+
-        
-        # Creating a new column
-        >>> result2 = apply_mapping(df, "fruit", mapping_dict, new_column="category")
-        >>> result2.show()
-        +------+------+------------+
-        | fruit| color|    category|
-        +------+------+------------+
-        | apple|   red|   red fruit|
-        |banana|yellow|yellow fruit|
-        +------+------+------------+
-    """
-    conditions = [
-        (create_condition_function(condition)(F.col(column)), F.lit(new_value))
-        for new_value, condition in mapping_dict.items()
-    ]
-    
-    mapped_column = F.coalesce(
-        F.when(conditions[0][0], conditions[0][1]),
-        *[F.when(cond, val) for cond, val in conditions[1:]],
-        F.col(column)
-    )
-    
-    if new_column:
-        return df.withColumn(new_column, mapped_column)
-    else:
-        return df.withColumn(column, mapped_column)
-
-def transform_dataframe(df: DataFrame, new_column: Optional[str] = None) -> DataFrame:
-    """
-    Apply transformations to the DataFrame using the value mapper function.
-    
-    Args:
-        df (DataFrame): The input DataFrame.
-        new_column (Optional[str]): If provided, creates a new column with this name instead of modifying the existing column.
-    
-    Returns:
-        DataFrame: The transformed DataFrame.
-    
-    Examples:
-        >>> df = spark.createDataFrame([
-        ...     ("Apple", "red", "Fruit description", "USA", "user@gmail.com", 25),
-        ...     ("Banana", "yellow", "Yellow fruit", "Canada", "user@yahoo.com", 30)
-        ... ], ["name", "color", "description", "country", "email", "age"])
-        
-        # Modifying existing column
-        >>> result1 = transform_dataframe(df)
-        >>> result1.show()
-        +------+------+------------------+-------+---------------+---+--------+
-        |  name| color|       description|country|          email|age|category|
-        +------+------+------------------+-------+---------------+---+--------+
-        | Apple|   red|Fruit description|    USA| user@gmail.com| 25|   apple|
-        |Banana|yellow|     Yellow fruit| Canada|user@yahoo.com| 30|    null|
-        +------+------+------------------+-------+---------------+---+--------+
-        
-        # Creating a new column
-        >>> result2 = transform_dataframe(df, new_column="mapped_category")
-        >>> result2.show()
-        +------+------+------------------+-------+---------------+---+---------------+
-        |  name| color|       description|country|          email|age|mapped_category|
-        +------+------+------------------+-------+---------------+---+---------------+
-        | Apple|   red|Fruit description|    USA| user@gmail.com| 25|          apple|
-        |Banana|yellow|     Yellow fruit| Canada|user@yahoo.com| 30|           null|
-        +------+------+------------------+-------+---------------+---+---------------+
-    """
-    mapping_dict = {
-        "apple": F.col("description").contains("ap"),
-        "pie": F.col("color") == "red",
-        "pear": F.col("name").like("A%"),
-        "gym": F.col("country").isin("USA", "Canada", "Mexico"),
-        "email_match": F.col("email").rlike("@gmail\.com$"),
-        "adult": F.col("age").between(18, 65)
-    }
-    
-    return df.transform(lambda d: apply_mapping(d, "category", mapping_dict, new_column))
-
-
----- run multiple notebooks
-
-from typing import List, Dict
-import re
-
-def run_notebooks_in_folder_sequentially(folder_path: str) -> List[Dict[str, str]]:
-    """
-    Run all notebooks in a specified folder sequentially.
+    This function validates the input, adds the prefix to the specified column,
+    and returns the modified DataFrame. It can be used standalone or as part of
+    a transformation pipeline.
 
     Args:
-        folder_path (str): The path to the folder containing the notebooks.
+        df (DataFrame): The input PySpark DataFrame.
+        column_name (str): The name of the column to be modified.
+        prefix_string (str): The string to be prefixed to the column values.
 
     Returns:
-        List[Dict[str, str]]: A list of dictionaries containing the results of each notebook run.
+        DataFrame: The DataFrame with the modified column.
 
     Example:
-        >>> folder_path = "/path/to/your/folder"
-        >>> results = run_notebooks_in_folder_sequentially(folder_path)
-        >>> for result in results:
-        ...     print(f"Notebook: {result['notebook']}, Status: {result['status']}, Result: {result['result']}")
-
-    Note:
-        This function is designed to run in Databricks environment.
+        >>> df = spark.createDataFrame([("Apple",), ("Banana",)], ["fruit"])
+        >>> result = prefix_string_to_column(df, "fruit", "Weblife: ")
+        >>> result.show()
+        +---------------+
+        |          fruit|
+        +---------------+
+        |Weblife: Apple |
+        |Weblife: Banana|
+        +---------------+
     """
-    def natural_sort_key(s):
-        return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', s)]
+    validate_input(df, column_name, prefix_string)
+    return add_prefix_to_column(df, column_name, prefix_string)
 
-    notebooks = dbutils.fs.ls(folder_path)
-    notebooks.sort(key=lambda x: natural_sort_key(x.name))
+# Add the transform method to the DataFrame class
+def transform(self: DataFrame, f: Callable[..., DataFrame], *args: Any, **kwargs: Any) -> DataFrame:
+    """
+    Applies a transformation function to the DataFrame.
 
-    results = []
+    Args:
+        f (Callable[..., DataFrame]): The transformation function to apply.
+        *args: Positional arguments to pass to the transformation function.
+        **kwargs: Keyword arguments to pass to the transformation function.
 
-    for notebook in notebooks:
-        if notebook.path.endswith(".ipynb"):
-            notebook_result = {
-                "notebook": notebook.path,
-                "status": "Not Run",
-                "result": None
-            }
-            print(f"Starting notebook: {notebook.path}")
-            try:
-                notebook_result["result"] = dbutils.notebook.run(notebook.path, timeout_seconds=0)
-                notebook_result["status"] = "Completed"
-                print(f"Notebook {notebook.path} completed with result: {notebook_result['result']}")
-            except Exception as e:
-                notebook_result["status"] = "Error"
-                notebook_result["result"] = str(e)
-                print(f"Error running notebook {notebook.path}: {str(e)}")
-            finally:
-                results.append(notebook_result)
+    Returns:
+        DataFrame: The transformed DataFrame.
+    """
+    return f(self, *args, **kwargs)
 
-    return results
+DataFrame.transform = transform
 
-# Example usage
-# folder_path = "/path/to/your/folder"
-# results = run_notebooks_in_folder_sequentially(folder_path)
-# for result in results:
-#     print(f"Notebook: {result['notebook']}, Status: {result['status']}, Result: {result['result']}")
+
+
 
 ```
