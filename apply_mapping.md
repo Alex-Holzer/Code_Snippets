@@ -58,7 +58,8 @@ def add_time_to_timestamp(
     add_time: Union[int, float]
 ) -> DataFrame:
     """
-    Add or subtract time from a timestamp column in a PySpark DataFrame.
+    Add or subtract time from a timestamp column in a PySpark DataFrame,
+    maintaining the timestamp data type.
 
     Args:
         df (DataFrame): Input DataFrame.
@@ -78,6 +79,8 @@ def add_time_to_timestamp(
         +---------------------+
         |2024-07-23 12:17:00  |
         +---------------------+
+        >>> result.schema["timestamp"].dataType
+        TimestampType
     """
     # Validate inputs
     validate_timestamp_addition_inputs(df, column_name, time_unit, add_time)
@@ -85,40 +88,13 @@ def add_time_to_timestamp(
     # Calculate seconds to add
     seconds_to_add = get_seconds_to_add(time_unit, add_time)
 
-    # Perform timestamp addition
+    # Perform timestamp addition and cast back to TimestampType
     return df.withColumn(
         column_name,
         F.from_unixtime(
             F.unix_timestamp(F.col(column_name)) + seconds_to_add
-        )
+        ).cast(TimestampType())
     )
-
-# Example usage
-def process_data(df: DataFrame) -> DataFrame:
-    return (
-        df.transform(lambda df: add_time_to_timestamp(df, "timestamp", "hours", 1))
-        # ... other transformations
-    )
-
-# Test the function
-if __name__ == "__main__":
-    from pyspark.sql import SparkSession
-
-    # Create a SparkSession
-    spark = SparkSession.builder.appName("TimestampAdditionTest").getOrCreate()
-
-    # Create a sample DataFrame
-    data = [("2024-07-23 11:17:00",)]
-    df = spark.createDataFrame(data, ["timestamp"])
-
-    # Apply the transformation
-    result_df = process_data(df)
-
-    # Show the result
-    result_df.show(truncate=False)
-
-    # Stop the SparkSession
-    spark.stop()
 
 ```
 
