@@ -51,6 +51,10 @@ def get_seconds_to_add(time_unit: str, add_time: Union[int, float]) -> float:
     }
     return add_time * multipliers[time_unit]
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import Union, Literal
+
 def add_time_to_timestamp(
     df: DataFrame,
     column_name: str,
@@ -59,7 +63,7 @@ def add_time_to_timestamp(
 ) -> DataFrame:
     """
     Add or subtract time from a timestamp column in a PySpark DataFrame,
-    maintaining the timestamp data type.
+    maintaining the timestamp data type with a specific format.
 
     Args:
         df (DataFrame): Input DataFrame.
@@ -71,16 +75,14 @@ def add_time_to_timestamp(
         DataFrame: DataFrame with the modified timestamp column.
 
     Example:
-        >>> df = spark.createDataFrame([("2024-07-23 11:17:00",)], ["timestamp"])
+        >>> df = spark.createDataFrame([("23.7.2024 11:17:00",)], ["timestamp"])
         >>> result = add_time_to_timestamp(df, "timestamp", "hours", 1)
         >>> result.show(truncate=False)
         +---------------------+
         |timestamp            |
         +---------------------+
-        |2024-07-23 12:17:00  |
+        |23.7.2024 12:17:00   |
         +---------------------+
-        >>> result.schema["timestamp"].dataType
-        TimestampType
     """
     # Validate inputs
     validate_timestamp_addition_inputs(df, column_name, time_unit, add_time)
@@ -88,12 +90,18 @@ def add_time_to_timestamp(
     # Calculate seconds to add
     seconds_to_add = get_seconds_to_add(time_unit, add_time)
 
-    # Perform timestamp addition and cast back to TimestampType
+    # Perform timestamp addition and format using to_timestamp
     return df.withColumn(
         column_name,
-        F.from_unixtime(
-            F.unix_timestamp(F.col(column_name)) + seconds_to_add
-        ).cast(TimestampType())
+        F.to_timestamp(
+            F.date_format(
+                F.to_timestamp(F.from_unixtime(
+                    F.unix_timestamp(F.col(column_name), "d.M.y H:m:s") + seconds_to_add
+                )),
+                "d.M.y H:m:s"
+            ),
+            "d.M.y H:m:s"
+        )
     )
 
 ```
