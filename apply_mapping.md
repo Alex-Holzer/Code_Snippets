@@ -1,7 +1,6 @@
 ```python
 
 from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
 from typing import Union, Literal
 
 def validate_timestamp_addition_inputs(
@@ -43,14 +42,7 @@ def get_interval_expression(time_unit: str, add_time: Union[int, float]) -> str:
     Returns:
         str: Interval expression for use in PySpark SQL functions.
     """
-    unit_mapping = {
-        'seconds': 'second',
-        'minutes': 'minute',
-        'hours': 'hour',
-        'days': 'day'
-    }
-    return f"{add_time} {unit_mapping[time_unit]}"
-
+    return f"{add_time} {time_unit}"
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
@@ -93,7 +85,7 @@ def add_time_to_timestamp(
     # Perform timestamp addition
     return df.withColumn(
         column_name,
-        F.to_timestamp(F.date_add(F.col(column_name), F.expr(interval_expr)))
+        F.expr(f"timestamp_add({column_name}, INTERVAL {interval_expr})")
     )
 
 
