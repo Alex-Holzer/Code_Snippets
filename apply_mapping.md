@@ -1,6 +1,7 @@
 ```python
 
 from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
 from typing import Union, Literal
 
 def validate_timestamp_addition_inputs(
@@ -31,22 +32,24 @@ def validate_timestamp_addition_inputs(
     if not isinstance(add_time, (int, float)):
         raise ValueError("add_time must be an integer or float.")
 
-def get_interval_expression(time_unit: str, add_time: Union[int, float]) -> str:
+def get_seconds_to_add(time_unit: str, add_time: Union[int, float]) -> float:
     """
-    Get the interval expression for adding time to a timestamp.
+    Convert the time to add to seconds based on the time unit.
 
     Args:
         time_unit (str): Time unit for addition ('seconds', 'minutes', 'hours', 'days').
         add_time (Union[int, float]): Amount of time to add (can be positive or negative).
 
     Returns:
-        str: Interval expression for use in PySpark SQL functions.
+        float: Number of seconds to add.
     """
-    return f"{add_time} {time_unit}"
-
-from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
-from typing import Union, Literal
+    multipliers = {
+        'seconds': 1,
+        'minutes': 60,
+        'hours': 3600,
+        'days': 86400
+    }
+    return add_time * multipliers[time_unit]
 
 def add_time_to_timestamp(
     df: DataFrame,
@@ -79,14 +82,43 @@ def add_time_to_timestamp(
     # Validate inputs
     validate_timestamp_addition_inputs(df, column_name, time_unit, add_time)
 
-    # Get interval expression
-    interval_expr = get_interval_expression(time_unit, add_time)
+    # Calculate seconds to add
+    seconds_to_add = get_seconds_to_add(time_unit, add_time)
 
     # Perform timestamp addition
     return df.withColumn(
         column_name,
-        F.expr(f"timestamp_add({column_name}, INTERVAL {interval_expr})")
+        F.from_unixtime(
+            F.unix_timestamp(F.col(column_name)) + seconds_to_add
+        )
     )
 
+# Example usage
+def process_data(df: DataFrame) -> DataFrame:
+    return (
+        df.transform(lambda df: add_time_to_timestamp(df, "timestamp", "hours", 1))
+        # ... other transformations
+    )
+
+# Test the function
+if __name__ == "__main__":
+    from pyspark.sql import SparkSession
+
+    # Create a SparkSession
+    spark = SparkSession.builder.appName("TimestampAdditionTest").getOrCreate()
+
+    # Create a sample DataFrame
+    data = [("2024-07-23 11:17:00",)]
+    df = spark.createDataFrame(data, ["timestamp"])
+
+    # Apply the transformation
+    result_df = process_data(df)
+
+    # Show the result
+    result_df.show(truncate=False)
+
+    # Stop the SparkSession
+    spark.stop()
 
 ```
+
