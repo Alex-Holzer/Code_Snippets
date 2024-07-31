@@ -1,0 +1,90 @@
+Certainly! I'll create a function that removes a specified suffix from column names in a PySpark DataFrame if the suffix is present. This function will follow the same best practices as the previous examples.
+
+
+
+```python
+from pyspark.sql import DataFrame
+from typing import List
+
+def remove_suffix_from_columns(
+    dataframe: DataFrame,
+    suffix: str,
+    case_sensitive: bool = True
+) -> DataFrame:
+    """
+    Remove a specified suffix from column names in a PySpark DataFrame if present.
+
+    Args:
+        dataframe (DataFrame): The input PySpark DataFrame.
+        suffix (str): The suffix to remove from column names.
+        case_sensitive (bool, optional): Whether the suffix matching should be
+                                         case-sensitive. Defaults to True.
+
+    Returns:
+        DataFrame: A new DataFrame with the suffix removed from applicable column names.
+
+    Example:
+        >>> from pyspark.sql import SparkSession
+        >>> spark = SparkSession.builder.getOrCreate()
+        >>> df = spark.createDataFrame(
+        ...     [(1, "a", "x"), (2, "b", "y")],
+        ...     ["id", "col1_temp", "col2_temp"]
+        ... )
+        >>> result_df = remove_suffix_from_columns(df, "_temp")
+        >>> result_df.show()
+        +---+----+----+
+        | id|col1|col2|
+        +---+----+----+
+        |  1|   a|   x|
+        |  2|   b|   y|
+        +---+----+----+
+    """
+    if not case_sensitive:
+        suffix = suffix.lower()
+
+    def remove_suffix(col_name: str) -> str:
+        if case_sensitive:
+            return col_name[:-len(suffix)] if col_name.endswith(suffix) else col_name
+        else:
+            return col_name[:-len(suffix)] if col_name.lower().endswith(suffix) else col_name
+
+    new_column_names: List[str] = [remove_suffix(col) for col in dataframe.columns]
+
+    return dataframe.toDF(*new_column_names)
+```
+
+This function, `remove_suffix_from_columns`, takes a PySpark DataFrame and removes the specified suffix from column names if present. Here's a breakdown of its features:
+
+1. Type hints are used for input parameters and return value.
+2. A detailed docstring is provided, explaining the function's purpose, parameters, return value, and including an example.
+3. The function follows PEP 8 style guidelines.
+4. It includes an optional `case_sensitive` parameter for case-insensitive suffix matching.
+5. The function uses a nested helper function `remove_suffix` to handle the suffix removal logic.
+6. List comprehension is used to efficiently process all column names.
+7. It returns a new DataFrame with renamed columns rather than modifying the input DataFrame in-place.
+
+Key parts of the implementation:
+
+1. The `remove_suffix` helper function:
+   ```python
+   def remove_suffix(col_name: str) -> str:
+       if case_sensitive:
+           return col_name[:-len(suffix)] if col_name.endswith(suffix) else col_name
+       else:
+           return col_name[:-len(suffix)] if col_name.lower().endswith(suffix) else col_name
+   ```
+   This function checks if the column name ends with the suffix (considering case sensitivity) and removes it if present. If the suffix is not present, it returns the original column name.
+
+2. Creating the list of new column names:
+   ```python
+   new_column_names: List[str] = [remove_suffix(col) for col in dataframe.columns]
+   ```
+   This applies the `remove_suffix` function to all column names.
+
+3. Creating a new DataFrame with renamed columns:
+   ```python
+   return dataframe.toDF(*new_column_names)
+   ```
+   This creates a new DataFrame with the updated column names.
+
+Would you like me to explain any part of this function in more detail or discuss how it differs from the previous functions?​​​​​​​​​​​​​​​​
