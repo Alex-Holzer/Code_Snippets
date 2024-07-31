@@ -1,0 +1,73 @@
+Certainly! I'll create a similar function that drops all columns with a specified suffix from a PySpark DataFrame, following the same best practices.
+
+
+
+```python
+from pyspark.sql import DataFrame
+from typing import List
+
+def drop_columns_by_suffix(
+    dataframe: DataFrame,
+    suffix: str,
+    case_sensitive: bool = True
+) -> DataFrame:
+    """
+    Drop all columns from a PySpark DataFrame that end with the specified suffix.
+
+    Args:
+        dataframe (DataFrame): The input PySpark DataFrame.
+        suffix (str): The suffix to match against column names.
+        case_sensitive (bool, optional): Whether the suffix matching should be
+                                         case-sensitive. Defaults to True.
+
+    Returns:
+        DataFrame: A new DataFrame with the specified columns dropped.
+
+    Example:
+        >>> from pyspark.sql import SparkSession
+        >>> spark = SparkSession.builder.getOrCreate()
+        >>> df = spark.createDataFrame(
+        ...     [(1, "a", "x"), (2, "b", "y")],
+        ...     ["id", "col1_temp", "col2_temp"]
+        ... )
+        >>> result_df = drop_columns_by_suffix(df, "_temp")
+        >>> result_df.show()
+        +---+
+        | id|
+        +---+
+        |  1|
+        |  2|
+        +---+
+    """
+    if not case_sensitive:
+        suffix = suffix.lower()
+
+    columns_to_drop: List[str] = [
+        col for col in dataframe.columns
+        if (col.lower() if not case_sensitive else col).endswith(suffix)
+    ]
+
+    return dataframe.drop(*columns_to_drop)
+```
+
+This function, `drop_columns_by_suffix`, is very similar to the previous `drop_columns_by_prefix` function, but it drops columns that end with the specified suffix instead of starting with a prefix. Here are the key features:
+
+1. It uses type hints for input parameters and return value.
+2. A detailed docstring is provided, explaining the function's purpose, parameters, return value, and including an example.
+3. The function follows PEP 8 style guidelines.
+4. It includes an optional `case_sensitive` parameter for case-insensitive suffix matching.
+5. The function uses list comprehension for efficient column filtering.
+6. It returns a new DataFrame rather than modifying the input DataFrame in-place.
+
+The main difference is in the column filtering logic:
+
+```python
+columns_to_drop: List[str] = [
+    col for col in dataframe.columns
+    if (col.lower() if not case_sensitive else col).endswith(suffix)
+]
+```
+
+This line uses the `endswith()` method instead of `startswith()` to check if each column name ends with the specified suffix.
+
+Would you like me to explain any part of this function in more detail or discuss any differences between the prefix and suffix versions?​​​​​​​​​​​​​​​​
