@@ -1,7 +1,9 @@
 ```python
+
 from pyspark.sql import DataFrame
 from typing import Optional
 from pyspark.sql.utils import AnalysisException
+import dbutils
 
 # Constants
 DEFAULT_BASE_NAME = "prod_uc_analyticsuw_uc1"
@@ -25,12 +27,11 @@ def construct_delta_table_path(
     """
     return f"{base_path}/{base_name}/{table_name}"
 
-def check_table_exists(spark, table_name: str) -> bool:
+def check_table_exists(table_name: str) -> bool:
     """
-    Check if a Delta table exists.
+    Check if a Delta table exists in Databricks.
     
     Args:
-        spark: The SparkSession object.
         table_name (str): The name of the table to check.
     
     Returns:
@@ -40,6 +41,22 @@ def check_table_exists(spark, table_name: str) -> bool:
         spark.table(table_name)
         return True
     except AnalysisException:
+        return False
+
+def check_path_exists(path: str) -> bool:
+    """
+    Check if a path exists in Databricks file system.
+    
+    Args:
+        path (str): The path to check.
+    
+    Returns:
+        bool: True if the path exists, False otherwise.
+    """
+    try:
+        dbutils.fs.ls(path)
+        return True
+    except Exception:
         return False
 
 
@@ -54,7 +71,7 @@ def write_delta_table(
     overwrite_schema: bool = False
 ) -> None:
     """
-    Write a DataFrame to a Delta table with specified options.
+    Write a DataFrame to a Delta table in Databricks with specified options.
     
     Args:
         df (DataFrame): The DataFrame to write.
@@ -73,10 +90,12 @@ def write_delta_table(
         "mode": "overwrite"
     }
     
-    if check_table_exists(df.sparkSession, full_table_name):
+    if check_table_exists(full_table_name) or check_path_exists(full_table_path):
         df.write.options(**write_options).saveAsTable(full_table_name)
     else:
         df.write.options(**write_options).saveAsTable(full_table_name, path=full_table_path)
+
+
 
 
 ```
