@@ -1,84 +1,82 @@
 ```python
+from pyspark.sql import DataFrame
+from typing import Optional
+from pyspark.sql.utils import AnalysisException
+
+# Constants
+DEFAULT_BASE_NAME = "prod_uc_analyticsuw_uc1"
+DEFAULT_BASE_PATH = "abfss://prod@eudldeg1koprod1.dfs.core.windows.net/PROD/usecases/AnalyticsUW_UC1"
+
+def construct_delta_table_path(
+    table_name: str,
+    base_name: str = DEFAULT_BASE_NAME,
+    base_path: str = DEFAULT_BASE_PATH
+) -> str:
+    """
+    Construct the full path for a Delta table.
+    
+    Args:
+        table_name (str): The name of the table.
+        base_name (str): The base name for the table. Defaults to DEFAULT_BASE_NAME.
+        base_path (str): The base path for the table. Defaults to DEFAULT_BASE_PATH.
+    
+    Returns:
+        str: The full path for the Delta table.
+    """
+    return f"{base_path}/{base_name}/{table_name}"
+
+def check_table_exists(spark, table_name: str) -> bool:
+    """
+    Check if a Delta table exists.
+    
+    Args:
+        spark: The SparkSession object.
+        table_name (str): The name of the table to check.
+    
+    Returns:
+        bool: True if the table exists, False otherwise.
+    """
+    try:
+        spark.table(table_name)
+        return True
+    except AnalysisException:
+        return False
+
 
 from pyspark.sql import DataFrame
-from typing import List, Optional, Union
-from pyspark.sql.functions import col
+from typing import Optional
 
-def save_delta_table(
+def write_delta_table(
     df: DataFrame,
     table_name: str,
-    path: str,
-    mode: str = "overwrite",
-    format: str = "delta",
-    partition_by: Optional[Union[str, List[str]]] = None,
-    z_order_by: Optional[Union[str, List[str]]] = None,
-    database: Optional[str] = None
+    base_name: str = DEFAULT_BASE_NAME,
+    base_path: str = DEFAULT_BASE_PATH,
+    overwrite_schema: bool = False
 ) -> None:
     """
-    Save a DataFrame as a Delta table in Azure Data Lake Storage and persist it in the Hive metastore.
-
-    This function writes the DataFrame to the specified path in Delta format and creates or updates
-    a table in the Hive metastore. It supports partitioning and Z-Ordering for optimized performance.
-
+    Write a DataFrame to a Delta table with specified options.
+    
     Args:
-        df (DataFrame): The DataFrame to be saved.
-        table_name (str): The name of the table to be created or updated in the Hive metastore.
-        path (str): The ABFSS path where the Delta table will be stored.
-        mode (str, optional): The save mode (e.g., "overwrite", "append"). Defaults to "overwrite".
-        format (str, optional): The file format. Defaults to "delta".
-        partition_by (Union[str, List[str]], optional): Column(s) to partition the data by.
-        z_order_by (Union[str, List[str]], optional): Column(s) to Z-Order the data by.
-        database (str, optional): The database name where the table should be created. 
-                                  If None, the default database will be used.
-
-    Raises:
-        ValueError: If an invalid mode or format is provided.
-
-    Example:
-        >>> df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "value"])
-        >>> save_delta_table(
-        ...     df,
-        ...     "my_table",
-        ...     "abfss://container@account.dfs.core.windows.net/path/to/table",
-        ...     partition_by="id",
-        ...     z_order_by="value",
-        ...     database="my_database"
-        ... )
+        df (DataFrame): The DataFrame to write.
+        table_name (str): The name of the table.
+        base_name (str): The base name for the table. Defaults to DEFAULT_BASE_NAME.
+        base_path (str): The base path for the table. Defaults to DEFAULT_BASE_PATH.
+        overwrite_schema (bool): Whether to overwrite the schema. Defaults to False.
     """
-    if format.lower() != "delta":
-        raise ValueError("This function only supports Delta format.")
-
-    if mode.lower() not in ["overwrite", "append", "ignore", "error"]:
-        raise ValueError(f"Invalid mode: {mode}. Supported modes are 'overwrite', 'append', 'ignore', and 'error'.")
-
-    # Prepare the writer
-    writer = df.write.format(format).mode(mode)
-
-    # Apply partitioning if specified
-    if partition_by:
-        if isinstance(partition_by, str):
-            partition_by = [partition_by]
-        writer = writer.partitionBy(*partition_by)
-
-    # Write the data
-    writer.save(path)
-
-    # Apply Z-Ordering if specified
-    if z_order_by:
-        if isinstance(z_order_by, str):
-            z_order_by = [z_order_by]
-        z_order_cols = ", ".join(z_order_by)
-        spark.sql(f"OPTIMIZE '{path}' ZORDER BY ({z_order_cols})")
-
-    # Create or replace the table in the Hive metastore
-    full_table_name = f"{database}.{table_name}" if database else table_name
-    spark.sql(f"""
-    CREATE OR REPLACE TABLE {full_table_name}
-    USING DELTA
-    LOCATION '{path}'
-    """)
-
-    print(f"✅ Table '{full_table_name}' has been successfully saved and persisted.")
+    full_table_name = f"{base_name}.{table_name}"
+    full_table_path = construct_delta_table_path(table_name, base_name, base_path)
+    
+    write_options = {
+        "format": "delta",
+        "overwriteSchema": str(overwrite_schema).lower(),
+        "delta.columnMapping.mode": "name",
+        "mode": "overwrite"
+    }
+    
+    if check_table_exists(df.sparkSession, full_table_name):
+        df.write.options(**write_options).saveAsTable(full_table_name)
+    else:
+        df.write.options(**write_options).saveAsTable(full_table_name, path=full_table_path)
 
 
 ```
