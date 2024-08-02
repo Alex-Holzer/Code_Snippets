@@ -1,96 +1,105 @@
 ```python
 
-def transform(self, f, *args, **kwargs):
+from typing import Dict
+
+def database_exists(database_name: str) -> bool:
     """
-    Apply a custom transformation function to the DataFrame.
+    Check if a database exists.
+    
+    Args:
+        database_name (str): The name of the database to check.
+    
+    Returns:
+        bool: True if the database exists, False otherwise.
+    """
+    existing_databases = [db.name for db in spark.catalog.listDatabases()]
+    return database_name.lower() in existing_databases
 
-    This method allows for flexible application of user-defined functions
-    to a DataFrame, enabling modular and reusable transformations.
+def create_database(
+    database_name: str,
+    database_directory: str,
+    database_properties: Dict[str, str],
+    database_comment: str
+) -> None:
+    """
+    Create a new database with the given parameters.
+    
+    Args:
+        database_name (str): The name of the database to create.
+        database_directory (str): The DBFS path for the database.
+        database_properties (Dict[str, str]): Additional properties for the database.
+        database_comment (str): A comment describing the database.
+    """
+    properties_str = ', '.join([f"'{k}' = '{v}'" for k, v in database_properties.items()])
+    create_db_sql = f"""
+    CREATE DATABASE IF NOT EXISTS {database_name}
+    LOCATION '{database_directory}'
+    WITH DBPROPERTIES ({properties_str})
+    COMMENT '{database_comment}'
+    """
+    spark.sql(create_db_sql)
 
-    Parameters:
-    -----------
-    f : callable
-        A function that takes a DataFrame as its first argument and returns
-        a transformed DataFrame.
-    *args : tuple
-        Variable length argument list to be passed to the function f.
-    **kwargs : dict
-        Arbitrary keyword arguments to be passed to the function f.
+def generate_message(database_name: str, exists: bool) -> str:
+    """
+    Generate an appropriate message based on whether the database exists.
+    
+    Args:
+        database_name (str): The name of the database.
+        exists (bool): Whether the database already exists.
+    
+    Returns:
+        str: A message indicating the result of the operation.
+    """
+    if exists:
+        return f"🚫 Database '{database_name}' already exists. No action taken."
+    else:
+        return f"✅ Database '{database_name}' has been successfully created!"
+
+
+from typing import Dict, Optional
+
+def create_database_if_not_exists(
+    database_name: str,
+    database_directory: str,
+    database_properties: Optional[Dict[str, str]] = None,
+    database_comment: str = ""
+) -> str:
+    """
+    Create a database if it doesn't exist in Databricks.
+
+    This function checks if a database with the given name exists. If it doesn't,
+    it creates the database with the specified parameters. If it already exists,
+    it returns a message indicating so.
+
+    Args:
+        database_name (str): The name of the database to create.
+        database_directory (str): The DBFS path for the database.
+        database_properties (Optional[Dict[str, str]]): Additional properties for the database.
+            Defaults to None.
+        database_comment (str): A comment describing the database. Defaults to an empty string.
 
     Returns:
-    --------
-    pyspark.sql.DataFrame
-        The transformed DataFrame.
+        str: A message indicating the result of the operation.
 
-    Examples:
-    ---------
-    >>> from pyspark.sql import functions as F
-    >>> from pyspark.sql import DataFrame
-    >>> 
-    >>> # Add the transform method to the DataFrame class
-    >>> DataFrame.transform = transform
-    >>> 
-    >>> # Sample DataFrame
-    >>> data = [("Alice", 25), ("Bob", 30), ("Charlie", 35)]
-    >>> df = spark.createDataFrame(data, ["name", "age"])
-    >>> 
-    >>> # Example 1: Simple transformation
-    >>> def add_greeting(df):
-    ...     return df.withColumn("greeting", F.concat(F.lit("Hello, "), F.col("name")))
-    >>> 
-    >>> df_with_greeting = df.transform(add_greeting)
-    >>> df_with_greeting.show()
-    +-------+---+--------------+
-    |   name|age|      greeting|
-    +-------+---+--------------+
-    |  Alice| 25|  Hello, Alice|
-    |    Bob| 30|    Hello, Bob|
-    |Charlie| 35|Hello, Charlie|
-    +-------+---+--------------+
-    >>> 
-    >>> # Example 2: Transformation with parameters
-    >>> def add_column(df, column_name, value):
-    ...     return df.withColumn(column_name, F.lit(value))
-    >>> 
-    >>> df_with_new_col = df.transform(add_column, "new_col", "some_value")
-    >>> df_with_new_col.show()
-    +-------+---+----------+
-    |   name|age|   new_col|
-    +-------+---+----------+
-    |  Alice| 25|some_value|
-    |    Bob| 30|some_value|
-    |Charlie| 35|some_value|
-    +-------+---+----------+
-    >>> 
-    >>> # Example 3: Chaining multiple transformations
-    >>> def filter_by_age(df, min_age):
-    ...     return df.filter(F.col("age") >= min_age)
-    >>> 
-    >>> df_final = (df
-    ...     .transform(add_greeting)
-    ...     .transform(add_column, "status", "active")
-    ...     .transform(filter_by_age, 30)
-    ... )
-    >>> df_final.show()
-    +-------+---+--------------+------+
-    |   name|age|      greeting|status|
-    +-------+---+--------------+------+
-    |    Bob| 30|    Hello, Bob|active|
-    |Charlie| 35|Hello, Charlie|active|
-    +-------+---+--------------+------+
-
-    Notes:
-    ------
-    - This method enhances the modularity and reusability of PySpark code.
-    - It allows for easy chaining of multiple transformations.
-    - Custom transformation functions should always return a DataFrame.
-    - The method adheres to the Single Responsibility Principle by allowing
-      each transformation function to focus on a specific task.
+    Example:
+        >>> result = create_database_if_not_exists(
+        ...     "my_new_database",
+        ...     "dbfs:/user/hive/warehouse/my_new_database.db",
+        ...     {"creator": "data_team", "purpose": "analytics"},
+        ...     "Database for analytics project"
+        ... )
+        >>> print(result)
     """
-    return f(self, *args, **kwargs)
+    if database_properties is None:
+        database_properties = {}
 
-# Add the transform method to the DataFrame class
-DataFrame.transform = transform
+    if database_exists(database_name):
+        return generate_message(database_name, True)
+    
+    create_database(database_name, database_directory, database_properties, database_comment)
+    return generate_message(database_name, False)
+
+
 
 
 ```
