@@ -4,7 +4,7 @@ from typing import Dict
 
 def database_exists(database_name: str) -> bool:
     """
-    Check if a database exists.
+    Check if a database exists in Databricks.
     
     Args:
         database_name (str): The name of the database to check.
@@ -12,8 +12,8 @@ def database_exists(database_name: str) -> bool:
     Returns:
         bool: True if the database exists, False otherwise.
     """
-    existing_databases = [db.name for db in spark.catalog.listDatabases()]
-    return database_name.lower() in existing_databases
+    result = spark.sql(f"SHOW DATABASES LIKE '{database_name}'").collect()
+    return len(result) > 0
 
 def create_database(
     database_name: str,
@@ -98,8 +98,6 @@ def create_database_if_not_exists(
     
     create_database(database_name, database_directory, database_properties, database_comment)
     return generate_message(database_name, False)
-
-
 
 
 ```
