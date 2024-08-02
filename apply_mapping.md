@@ -1,8 +1,6 @@
 ```python
-
 from pyspark.sql import DataFrame
 from typing import Optional
-from pyspark.sql.utils import AnalysisException
 import dbutils
 
 # Constants
@@ -26,22 +24,6 @@ def construct_delta_table_path(
         str: The full path for the Delta table.
     """
     return f"{base_path}/{base_name}/{table_name}"
-
-def check_table_exists(table_name: str) -> bool:
-    """
-    Check if a Delta table exists in Databricks.
-    
-    Args:
-        table_name (str): The name of the table to check.
-    
-    Returns:
-        bool: True if the table exists, False otherwise.
-    """
-    try:
-        spark.table(table_name)
-        return True
-    except AnalysisException:
-        return False
 
 def check_path_exists(path: str) -> bool:
     """
@@ -90,11 +72,12 @@ def write_delta_table(
         "mode": "overwrite"
     }
     
-    if check_table_exists(full_table_name) or check_path_exists(full_table_path):
+    if check_path_exists(full_table_path):
+        # Table already exists, use saveAsTable without specifying the path
         df.write.options(**write_options).saveAsTable(full_table_name)
     else:
+        # Table doesn't exist, specify the path
         df.write.options(**write_options).saveAsTable(full_table_name, path=full_table_path)
-
 
 
 
