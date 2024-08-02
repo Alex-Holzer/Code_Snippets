@@ -1,104 +1,84 @@
 ```python
 
-from typing import Dict
+from pyspark.sql import DataFrame
+from typing import List, Optional, Union
+from pyspark.sql.functions import col
 
-def database_exists(database_name: str) -> bool:
-    """
-    Check if a database exists in Databricks.
-    
-    Args:
-        database_name (str): The name of the database to check.
-    
-    Returns:
-        bool: True if the database exists, False otherwise.
-    """
-    result = spark.sql(f"SHOW DATABASES LIKE '{database_name}'").collect()
-    return len(result) > 0
-
-def create_database(
-    database_name: str,
-    location: str,
-    database_properties: Dict[str, str],
-    database_comment: str
+def save_delta_table(
+    df: DataFrame,
+    table_name: str,
+    path: str,
+    mode: str = "overwrite",
+    format: str = "delta",
+    partition_by: Optional[Union[str, List[str]]] = None,
+    z_order_by: Optional[Union[str, List[str]]] = None,
+    database: Optional[str] = None
 ) -> None:
     """
-    Create a new database with the given parameters.
-    
-    Args:
-        database_name (str): The name of the database to create.
-        location (str): The ABFSS path for the database.
-        database_properties (Dict[str, str]): Additional properties for the database.
-        database_comment (str): A comment describing the database.
-    """
-    properties_str = ', '.join([f"'{k}' = '{v}'" for k, v in database_properties.items()])
-    create_db_sql = f"""
-    CREATE DATABASE IF NOT EXISTS {database_name}
-    LOCATION '{location}'
-    WITH DBPROPERTIES ({properties_str})
-    COMMENT '{database_comment}'
-    """
-    spark.sql(create_db_sql)
+    Save a DataFrame as a Delta table in Azure Data Lake Storage and persist it in the Hive metastore.
 
-def generate_message(database_name: str, exists: bool) -> str:
-    """
-    Generate an appropriate message based on whether the database exists.
-    
-    Args:
-        database_name (str): The name of the database.
-        exists (bool): Whether the database already exists.
-    
-    Returns:
-        str: A message indicating the result of the operation.
-    """
-    if exists:
-        return f"🚫 Database '{database_name}' already exists. No action taken."
-    else:
-        return f"✅ Database '{database_name}' has been successfully created!"
-
-from typing import Dict, Optional
-
-def create_database_if_not_exists(
-    database_name: str,
-    location: str,
-    database_properties: Optional[Dict[str, str]] = None,
-    database_comment: str = ""
-) -> str:
-    """
-    Create a database if it doesn't exist in Databricks.
-
-    This function checks if a database with the given name exists. If it doesn't,
-    it creates the database with the specified parameters. If it already exists,
-    it returns a message indicating so.
+    This function writes the DataFrame to the specified path in Delta format and creates or updates
+    a table in the Hive metastore. It supports partitioning and Z-Ordering for optimized performance.
 
     Args:
-        database_name (str): The name of the database to create.
-        location (str): The ABFSS path for the database storage location.
-            This should be in the format 'abfss://<container>@<storage-account-name>.dfs.core.windows.net/<path>'.
-        database_properties (Optional[Dict[str, str]]): Additional properties for the database.
-            Defaults to None.
-        database_comment (str): A comment describing the database. Defaults to an empty string.
+        df (DataFrame): The DataFrame to be saved.
+        table_name (str): The name of the table to be created or updated in the Hive metastore.
+        path (str): The ABFSS path where the Delta table will be stored.
+        mode (str, optional): The save mode (e.g., "overwrite", "append"). Defaults to "overwrite".
+        format (str, optional): The file format. Defaults to "delta".
+        partition_by (Union[str, List[str]], optional): Column(s) to partition the data by.
+        z_order_by (Union[str, List[str]], optional): Column(s) to Z-Order the data by.
+        database (str, optional): The database name where the table should be created. 
+                                  If None, the default database will be used.
 
-    Returns:
-        str: A message indicating the result of the operation.
+    Raises:
+        ValueError: If an invalid mode or format is provided.
 
     Example:
-        >>> result = create_database_if_not_exists(
-        ...     "my_new_database",
-        ...     "abfss://container@storageaccount.dfs.core.windows.net/databases/my_new_database",
-        ...     {"creator": "data_team", "purpose": "analytics"},
-        ...     "Database for analytics project"
+        >>> df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "value"])
+        >>> save_delta_table(
+        ...     df,
+        ...     "my_table",
+        ...     "abfss://container@account.dfs.core.windows.net/path/to/table",
+        ...     partition_by="id",
+        ...     z_order_by="value",
+        ...     database="my_database"
         ... )
-        >>> print(result)
     """
-    if database_properties is None:
-        database_properties = {}
+    if format.lower() != "delta":
+        raise ValueError("This function only supports Delta format.")
 
-    if database_exists(database_name):
-        return generate_message(database_name, True)
-    
-    create_database(database_name, location, database_properties, database_comment)
-    return generate_message(database_name, False)
+    if mode.lower() not in ["overwrite", "append", "ignore", "error"]:
+        raise ValueError(f"Invalid mode: {mode}. Supported modes are 'overwrite', 'append', 'ignore', and 'error'.")
 
+    # Prepare the writer
+    writer = df.write.format(format).mode(mode)
+
+    # Apply partitioning if specified
+    if partition_by:
+        if isinstance(partition_by, str):
+            partition_by = [partition_by]
+        writer = writer.partitionBy(*partition_by)
+
+    # Write the data
+    writer.save(path)
+
+    # Apply Z-Ordering if specified
+    if z_order_by:
+        if isinstance(z_order_by, str):
+            z_order_by = [z_order_by]
+        z_order_cols = ", ".join(z_order_by)
+        spark.sql(f"OPTIMIZE '{path}' ZORDER BY ({z_order_cols})")
+
+    # Create or replace the table in the Hive metastore
+    full_table_name = f"{database}.{table_name}" if database else table_name
+    spark.sql(f"""
+    CREATE OR REPLACE TABLE {full_table_name}
+    USING DELTA
+    LOCATION '{path}'
+    """)
+
+    print(f"✅ Table '{full_table_name}' has been successfully saved and persisted.")
 
 
 ```
