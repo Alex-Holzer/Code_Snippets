@@ -17,7 +17,7 @@ def database_exists(database_name: str) -> bool:
 
 def create_database(
     database_name: str,
-    database_directory: str,
+    location: str,
     database_properties: Dict[str, str],
     database_comment: str
 ) -> None:
@@ -26,14 +26,14 @@ def create_database(
     
     Args:
         database_name (str): The name of the database to create.
-        database_directory (str): The DBFS path for the database.
+        location (str): The ABFSS path for the database.
         database_properties (Dict[str, str]): Additional properties for the database.
         database_comment (str): A comment describing the database.
     """
     properties_str = ', '.join([f"'{k}' = '{v}'" for k, v in database_properties.items()])
     create_db_sql = f"""
     CREATE DATABASE IF NOT EXISTS {database_name}
-    LOCATION '{database_directory}'
+    LOCATION '{location}'
     WITH DBPROPERTIES ({properties_str})
     COMMENT '{database_comment}'
     """
@@ -55,12 +55,11 @@ def generate_message(database_name: str, exists: bool) -> str:
     else:
         return f"✅ Database '{database_name}' has been successfully created!"
 
-
 from typing import Dict, Optional
 
 def create_database_if_not_exists(
     database_name: str,
-    database_directory: str,
+    location: str,
     database_properties: Optional[Dict[str, str]] = None,
     database_comment: str = ""
 ) -> str:
@@ -73,7 +72,8 @@ def create_database_if_not_exists(
 
     Args:
         database_name (str): The name of the database to create.
-        database_directory (str): The DBFS path for the database.
+        location (str): The ABFSS path for the database storage location.
+            This should be in the format 'abfss://<container>@<storage-account-name>.dfs.core.windows.net/<path>'.
         database_properties (Optional[Dict[str, str]]): Additional properties for the database.
             Defaults to None.
         database_comment (str): A comment describing the database. Defaults to an empty string.
@@ -84,7 +84,7 @@ def create_database_if_not_exists(
     Example:
         >>> result = create_database_if_not_exists(
         ...     "my_new_database",
-        ...     "dbfs:/user/hive/warehouse/my_new_database.db",
+        ...     "abfss://container@storageaccount.dfs.core.windows.net/databases/my_new_database",
         ...     {"creator": "data_team", "purpose": "analytics"},
         ...     "Database for analytics project"
         ... )
@@ -96,8 +96,9 @@ def create_database_if_not_exists(
     if database_exists(database_name):
         return generate_message(database_name, True)
     
-    create_database(database_name, database_directory, database_properties, database_comment)
+    create_database(database_name, location, database_properties, database_comment)
     return generate_message(database_name, False)
+
 
 
 ```
