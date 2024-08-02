@@ -45,12 +45,16 @@ def check_path_exists(path: str) -> bool:
 from pyspark.sql import DataFrame
 from typing import Optional
 
+from pyspark.sql import DataFrame
+from typing import Optional
+
 def write_delta_table(
     df: DataFrame,
     table_name: str,
     base_name: str = DEFAULT_BASE_NAME,
     base_path: str = DEFAULT_BASE_PATH,
-    overwrite_schema: bool = False
+    overwrite_schema: bool = False,
+    overwrite_table: bool = False
 ) -> None:
     """
     Write a DataFrame to a Delta table in Databricks with specified options.
@@ -61,24 +65,32 @@ def write_delta_table(
         base_name (str): The base name for the table. Defaults to DEFAULT_BASE_NAME.
         base_path (str): The base path for the table. Defaults to DEFAULT_BASE_PATH.
         overwrite_schema (bool): Whether to overwrite the schema. Defaults to False.
+        overwrite_table (bool): Whether to overwrite the entire table. Defaults to False.
     """
     full_table_name = f"{base_name}.{table_name}"
     full_table_path = construct_delta_table_path(table_name, base_name, base_path)
     
     write_options = {
         "format": "delta",
-        "overwriteSchema": str(overwrite_schema).lower(),
         "delta.columnMapping.mode": "name",
-        "mode": "overwrite"
     }
     
+    if overwrite_table:
+        write_options["mode"] = "overwrite"
+        write_options["overwriteSchema"] = "true"
+    elif overwrite_schema:
+        write_options["mode"] = "overwrite"
+        write_options["overwriteSchema"] = "true"
+    else:
+        write_options["mode"] = "append"
+        write_options["mergeSchema"] = "true"
+    
     if check_path_exists(full_table_path):
-        # Table already exists, use saveAsTable without specifying the path
+        # Table already exists
         df.write.options(**write_options).saveAsTable(full_table_name)
     else:
         # Table doesn't exist, specify the path
         df.write.options(**write_options).saveAsTable(full_table_name, path=full_table_path)
-
 
 
 ```
