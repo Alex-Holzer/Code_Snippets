@@ -1,133 +1,83 @@
 ```python
 
-
-
-
-from functools import wraps
-from typing import Any, Callable, Tuple
-
-def validate_args(*validators: Callable[[Any], None]):
-    """
-    A decorator that applies validation functions to the arguments of the decorated function.
-
-    Args:
-        *validators: A variable number of validation functions to be applied to the function arguments.
-
-    Returns:
-        Callable: A decorator function.
-    """
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Validate positional arguments
-            for validator, arg in zip(validators, args):
-                try:
-                    validator(arg)
-                except (ValueError, TypeError) as e:
-                    raise ValueError(f"Validation failed for argument: {arg}. Error: {str(e)}")
-            
-            # Validate keyword arguments
-            func_params = func.__annotations__
-            for param_name, param_value in kwargs.items():
-                if param_name in func_params:
-                    validator_index = list(func_params.keys()).index(param_name)
-                    if validator_index < len(validators):
-                        try:
-                            validators[validator_index](param_value)
-                        except (ValueError, TypeError) as e:
-                            raise ValueError(f"Validation failed for argument '{param_name}': {param_value}. Error: {str(e)}")
-            
-            return func(*args, **kwargs)
-        return wrapper
-    return decorator
-
-
-def validate_positive(value: float) -> None:
-    if value <= 0:
-        raise ValueError("Value must be positive")
-
-def validate_string(value: str) -> None:
-    if not isinstance(value, str):
-        raise TypeError("Value must be a string")
-
-@validate_args(validate_positive, validate_positive, validate_string)
-def calculate_volume(length: float, width: float, unit: str) -> Tuple[float, str]:
-    return length * width, unit
-
-# Usage
-print(calculate_volume(5, 3, "cm²"))  # Valid: (15, 'cm²')
-# print(calculate_volume(-1, 3, "cm²"))  # Raises ValueError
-# print(calculate_volume(5, 3, 42))  # Raises TypeError
-# print(calculate_volume(length=5, width=3, unit="cm²"))  # Valid: (15, 'cm²')
-
-
-
+import pytest
 from pyspark.sql import DataFrame
+from unittest.mock import Mock
 from typing import Any, Dict
 
-def validate_pyspark_dataframe(df: Any) -> None:
-    """
-    Validate that the input is a PySpark DataFrame and is not empty.
+# Import the functions to be tested
+from your_module import validate_pyspark_dataframe, validate_dictionary, validate_args
 
-    Args:
-        df (Any): The object to validate.
+# Mock DataFrame for testing
+class MockDataFrame(DataFrame):
+    def __init__(self, is_empty=False):
+        self.is_empty = is_empty
 
-    Raises:
-        TypeError: If the input is not a PySpark DataFrame.
-        ValueError: If the DataFrame is empty.
-    """
-    if not isinstance(df, DataFrame):
-        raise TypeError(f"Expected PySpark DataFrame, got {type(df).__name__}")
-    
-    if df.rdd.isEmpty():
-        raise ValueError("DataFrame is empty")
+    @property
+    def rdd(self):
+        return Mock(isEmpty=lambda: self.is_empty)
 
-def validate_dictionary(d: Any) -> None:
-    """
-    Validate that the input is a dictionary and is not empty.
+# Tests for validate_pyspark_dataframe
+def test_validate_pyspark_dataframe_valid():
+    df = MockDataFrame()
+    validate_pyspark_dataframe(df)  # Should not raise any exception
 
-    Args:
-        d (Any): The object to validate.
+def test_validate_pyspark_dataframe_invalid_type():
+    with pytest.raises(TypeError, match="Expected PySpark DataFrame, got list"):
+        validate_pyspark_dataframe([1, 2, 3])
 
-    Raises:
-        TypeError: If the input is not a dictionary.
-        ValueError: If the dictionary is empty.
-    """
-    if not isinstance(d, dict):
-        raise TypeError(f"Expected dictionary, got {type(d).__name__}")
-    
-    if not d:
-        raise ValueError("Dictionary is empty")
+def test_validate_pyspark_dataframe_empty():
+    df = MockDataFrame(is_empty=True)
+    with pytest.raises(ValueError, match="DataFrame is empty"):
+        validate_pyspark_dataframe(df)
 
-# Example usage with the validate_args decorator
+# Tests for validate_dictionary
+def test_validate_dictionary_valid():
+    d = {"key": "value"}
+    validate_dictionary(d)  # Should not raise any exception
+
+def test_validate_dictionary_invalid_type():
+    with pytest.raises(TypeError, match="Expected dictionary, got list"):
+        validate_dictionary([1, 2, 3])
+
+def test_validate_dictionary_empty():
+    with pytest.raises(ValueError, match="Dictionary is empty"):
+        validate_dictionary({})
+
+# Tests for validate_args decorator
 @validate_args(validate_pyspark_dataframe, validate_dictionary)
-def process_dataframe_with_params(df: DataFrame, params: Dict[str, Any]) -> DataFrame:
-    """
-    Process a PySpark DataFrame using the provided parameters.
+def dummy_function(df: DataFrame, params: Dict[str, Any]) -> str:
+    return "Success"
 
-    Args:
-        df (DataFrame): The input PySpark DataFrame to process.
-        params (Dict[str, Any]): A dictionary of parameters for processing.
+def test_validate_args_decorator_valid():
+    df = MockDataFrame()
+    params = {"key": "value"}
+    assert dummy_function(df, params) == "Success"
 
-    Returns:
-        DataFrame: The processed DataFrame.
-    """
-    # Example processing (replace with actual logic)
-    for column, value in params.items():
-        if column in df.columns:
-            df = df.filter(df[column] == value)
-    return df
+def test_validate_args_decorator_invalid_df():
+    params = {"key": "value"}
+    with pytest.raises(ValueError, match="Validation failed for argument:"):
+        dummy_function([1, 2, 3], params)
 
-# Usage example (assuming you have a SparkSession named 'spark')
-# from pyspark.sql import SparkSession
-# spark = SparkSession.builder.appName("ValidationExample").getOrCreate()
-# 
-# sample_df = spark.createDataFrame([(1, "A"), (2, "B")], ["id", "category"])
-# sample_params = {"category": "A"}
-# 
-# result = process_dataframe_with_params(sample_df, sample_params)
-# result.show()
+def test_validate_args_decorator_invalid_dict():
+    df = MockDataFrame()
+    with pytest.raises(ValueError, match="Validation failed for argument:"):
+        dummy_function(df, [1, 2, 3])
 
+# Additional test for keyword arguments
+def test_validate_args_decorator_with_kwargs():
+    df = MockDataFrame()
+    params = {"key": "value"}
+    assert dummy_function(df=df, params=params) == "Success"
+
+# Test for partial application of arguments
+def test_validate_args_decorator_partial_application():
+    df = MockDataFrame()
+    with pytest.raises(ValueError, match="Validation failed for argument"):
+        dummy_function(df)  # Missing 'params' argument
+
+if __name__ == "__main__":
+    pytest.main()
 
 ```
 
