@@ -1,102 +1,86 @@
 ```python
 
-from pyspark.sql import DataFrame
-from typing import Any, Callable
+from typing import Any, List
 
-def validate_dictionary(func: Callable) -> Callable:
+def validate_list(arg: Any) -> None:
     """
-    Decorator to validate that the input is a non-empty dictionary.
+    Validate that the input is a non-empty list.
     
     Args:
-        func (Callable): The function to be decorated.
+        arg (Any): The argument to validate.
     
-    Returns:
-        Callable: The wrapped function.
+    Raises:
+        TypeError: If the input is not a list.
+        ValueError: If the list is empty.
     """
-    def wrapper(arg: Any) -> None:
-        if not isinstance(arg, dict):
-            raise TypeError(f"Expected dictionary, got {type(arg).__name__}")
-        if not arg:
-            raise ValueError("Dictionary is empty")
-        return func(arg)
-    return wrapper
+    if not isinstance(arg, list):
+        raise TypeError(f"Expected list, got {type(arg).__name__}")
+    if not arg:
+        raise ValueError("List is empty")
 
-def validate_pyspark_dataframe(func: Callable) -> Callable:
+def validate_boolean(arg: Any) -> None:
     """
-    Decorator to validate that the input is a non-empty PySpark DataFrame.
+    Validate that the input is a boolean.
     
     Args:
-        func (Callable): The function to be decorated.
+        arg (Any): The argument to validate.
     
-    Returns:
-        Callable: The wrapped function.
+    Raises:
+        TypeError: If the input is not a boolean.
     """
-    def wrapper(arg: Any) -> None:
-        if not isinstance(arg, DataFrame):
-            raise TypeError(f"Expected PySpark DataFrame, got {type(arg).__name__}")
-        if arg.rdd.isEmpty():
-            raise ValueError("DataFrame is empty")
-        return func(arg)
-    return wrapper
+    if not isinstance(arg, bool):
+        raise TypeError(f"Expected boolean, got {type(arg).__name__}")
 
 # Test functions
-def test_validate_dictionary():
-    @validate_dictionary
-    def dummy_dict_func(d):
-        return "Valid dictionary"
-
-    # Test valid dictionary
-    assert dummy_dict_func({"key": "value"}) == "Valid dictionary"
+def test_validate_list():
+    # Test valid list
+    try:
+        validate_list([1, 2, 3])
+    except Exception as e:
+        assert False, f"Unexpected exception raised: {e}"
 
     # Test invalid type
     try:
-        dummy_dict_func([1, 2, 3])
+        validate_list({"key": "value"})
+        assert False, "TypeError not raised for non-list input"
     except TypeError as e:
-        assert str(e) == "Expected dictionary, got list"
-    else:
-        assert False, "TypeError not raised"
+        assert str(e) == "Expected list, got dict"
 
-    # Test empty dictionary
+    # Test empty list
     try:
-        dummy_dict_func({})
+        validate_list([])
+        assert False, "ValueError not raised for empty list"
     except ValueError as e:
-        assert str(e) == "Dictionary is empty"
-    else:
-        assert False, "ValueError not raised"
+        assert str(e) == "List is empty"
 
-def test_validate_pyspark_dataframe():
-    class MockDataFrame:
-        def __init__(self, is_empty=False):
-            self.rdd = type('MockRDD', (), {'isEmpty': lambda: is_empty})()
-
-    @validate_pyspark_dataframe
-    def dummy_df_func(df):
-        return "Valid DataFrame"
-
-    # Test valid DataFrame
-    assert dummy_df_func(MockDataFrame()) == "Valid DataFrame"
+def test_validate_boolean():
+    # Test valid boolean
+    try:
+        validate_boolean(True)
+        validate_boolean(False)
+    except Exception as e:
+        assert False, f"Unexpected exception raised: {e}"
 
     # Test invalid type
     try:
-        dummy_df_func([1, 2, 3])
+        validate_boolean(1)
+        assert False, "TypeError not raised for non-boolean input"
     except TypeError as e:
-        assert str(e) == "Expected PySpark DataFrame, got list"
-    else:
-        assert False, "TypeError not raised"
+        assert str(e) == "Expected boolean, got int"
 
-    # Test empty DataFrame
+    # Test with string 'True'
     try:
-        dummy_df_func(MockDataFrame(is_empty=True))
-    except ValueError as e:
-        assert str(e) == "DataFrame is empty"
-    else:
-        assert False, "ValueError not raised"
+        validate_boolean("True")
+        assert False, "TypeError not raised for string 'True'"
+    except TypeError as e:
+        assert str(e) == "Expected boolean, got str"
 
 # Run tests
 if __name__ == "__main__":
-    test_validate_dictionary()
-    test_validate_pyspark_dataframe()
+    test_validate_list()
+    test_validate_boolean()
     print("All tests passed!")
+
 
 ```
 
