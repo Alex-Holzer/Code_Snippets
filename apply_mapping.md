@@ -1,86 +1,98 @@
 ```python
 
-from typing import Any, List
+from typing import Callable, Any, Tuple
 
-def validate_list(arg: Any) -> None:
+def validate_args(*validators: Callable[[Any], None]):
     """
-    Validate that the input is a non-empty list.
-    
+    A decorator that applies a series of validation functions to the arguments of the decorated function.
+
+    This decorator allows you to specify validation functions for each argument of the decorated function.
+    It will apply these validators in order to the positional arguments, and to keyword arguments if they
+    match the parameter names of the decorated function.
+
     Args:
-        arg (Any): The argument to validate.
-    
+        *validators (Callable[[Any], None]): A variable number of validation functions. Each function
+            should take a single argument and raise an exception if the validation fails.
+
+    Returns:
+        Callable: A decorator function that can be applied to other functions.
+
     Raises:
-        TypeError: If the input is not a list.
-        ValueError: If the list is empty.
-    """
-    if not isinstance(arg, list):
-        raise TypeError(f"Expected list, got {type(arg).__name__}")
-    if not arg:
-        raise ValueError("List is empty")
+        ValueError: If a validation function raises an exception, it's caught and re-raised as a ValueError
+            with additional context about which argument failed validation.
 
-def validate_boolean(arg: Any) -> None:
+    Examples:
+        Define some validation functions:
+
+        >>> def validate_positive(value):
+        ...     if value <= 0:
+        ...         raise ValueError("Value must be positive")
+        
+        >>> def validate_string(value):
+        ...     if not isinstance(value, str):
+        ...         raise TypeError("Value must be a string")
+
+        Use the decorator with positional arguments:
+
+        >>> @validate_args(validate_positive, validate_positive, validate_string)
+        ... def create_rectangle(width, height, color):
+        ...     return f"A {color} rectangle of size {width}x{height}"
+        
+        >>> create_rectangle(5, 10, "blue")
+        'A blue rectangle of size 5x10'
+        
+        >>> create_rectangle(-5, 10, "red")
+        Traceback (most recent call last):
+            ...
+        ValueError: Validation failed for argument: -5. Error: Value must be positive
+
+        Use the decorator with keyword arguments:
+
+        >>> @validate_args(validate_string, validate_positive)
+        ... def greet(name: str, times: int):
+        ...     return f"Hello, {name}! " * times
+        
+        >>> greet(name="Alice", times=3)
+        'Hello, Alice! Hello, Alice! Hello, Alice! '
+        
+        >>> greet(name=123, times=2)
+        Traceback (most recent call last):
+            ...
+        ValueError: Validation failed for argument 'name': 123. Error: Value must be a string
+
+    Note:
+        - The number of validators should match the number of parameters in the decorated function.
+        - If a validator is not needed for a particular parameter, you can use `lambda x: None` as a no-op validator.
+        - The decorator preserves the original function's metadata (e.g., name, docstring) using `functools.wraps`.
     """
-    Validate that the input is a boolean.
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        from functools import wraps
+        
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Validate positional arguments
+            for validator, arg in zip(validators, args):
+                try:
+                    validator(arg)
+                except Exception as e:
+                    raise ValueError(f"Validation failed for argument: {arg}. Error: {str(e)}")
+            
+            # Validate keyword arguments
+            func_params = func.__annotations__
+            for param_name, param_value in kwargs.items():
+                if param_name in func_params:
+                    validator_index = list(func_params.keys()).index(param_name)
+                    if validator_index < len(validators):
+                        try:
+                            validators[validator_index](param_value)
+                        except Exception as e:
+                            raise ValueError(f"Validation failed for argument '{param_name}': {param_value}. Error: {str(e)}")
+            
+            return func(*args, **kwargs)
+        
+        return wrapper
     
-    Args:
-        arg (Any): The argument to validate.
-    
-    Raises:
-        TypeError: If the input is not a boolean.
-    """
-    if not isinstance(arg, bool):
-        raise TypeError(f"Expected boolean, got {type(arg).__name__}")
-
-# Test functions
-def test_validate_list():
-    # Test valid list
-    try:
-        validate_list([1, 2, 3])
-    except Exception as e:
-        assert False, f"Unexpected exception raised: {e}"
-
-    # Test invalid type
-    try:
-        validate_list({"key": "value"})
-        assert False, "TypeError not raised for non-list input"
-    except TypeError as e:
-        assert str(e) == "Expected list, got dict"
-
-    # Test empty list
-    try:
-        validate_list([])
-        assert False, "ValueError not raised for empty list"
-    except ValueError as e:
-        assert str(e) == "List is empty"
-
-def test_validate_boolean():
-    # Test valid boolean
-    try:
-        validate_boolean(True)
-        validate_boolean(False)
-    except Exception as e:
-        assert False, f"Unexpected exception raised: {e}"
-
-    # Test invalid type
-    try:
-        validate_boolean(1)
-        assert False, "TypeError not raised for non-boolean input"
-    except TypeError as e:
-        assert str(e) == "Expected boolean, got int"
-
-    # Test with string 'True'
-    try:
-        validate_boolean("True")
-        assert False, "TypeError not raised for string 'True'"
-    except TypeError as e:
-        assert str(e) == "Expected boolean, got str"
-
-# Run tests
-if __name__ == "__main__":
-    test_validate_list()
-    test_validate_boolean()
-    print("All tests passed!")
-
+    return decorator
 
 ```
 
