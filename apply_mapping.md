@@ -1,99 +1,133 @@
 ```python
 
-from pyspark.sql import DataFrame
-from delta.tables import DeltaTable
-from typing import List, Optional
 
-def save_delta_table(
-    df: DataFrame,
-    path: str,
-    partition_by: Optional[List[str]] = None,
-    z_order_by: Optional[List[str]] = None,
-    mode: str = "overwrite"
-) -> None:
+
+
+from functools import wraps
+from typing import Any, Callable, Tuple
+
+def validate_args(*validators: Callable[[Any], None]):
     """
-    Saves a DataFrame as a Delta table, performs optimization, and applies Z-Ordering.
+    A decorator that applies validation functions to the arguments of the decorated function.
 
     Args:
-        df (DataFrame): The DataFrame to be saved.
-        path (str): The path where the Delta table should be saved.
-        partition_by (Optional[List[str]]): List of columns for partitioning.
-        z_order_by (Optional[List[str]]): List of columns for Z-Ordering.
-        mode (str): Write mode ("overwrite", "append", etc.). Defaults to "overwrite".
+        *validators: A variable number of validation functions to be applied to the function arguments.
 
     Returns:
-        None
-
-    Example:
-        >>> df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "value"])
-        >>> save_delta_table(df, "/path/to/delta", partition_by=["id"], z_order_by=["value"])
+        Callable: A decorator function.
     """
-    _write_delta_table(df, path, partition_by, mode)
-    _optimize_delta_table(path, z_order_by)
-    print(f"Delta table has been saved and optimized: {path}")
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Validate positional arguments
+            for validator, arg in zip(validators, args):
+                try:
+                    validator(arg)
+                except (ValueError, TypeError) as e:
+                    raise ValueError(f"Validation failed for argument: {arg}. Error: {str(e)}")
+            
+            # Validate keyword arguments
+            func_params = func.__annotations__
+            for param_name, param_value in kwargs.items():
+                if param_name in func_params:
+                    validator_index = list(func_params.keys()).index(param_name)
+                    if validator_index < len(validators):
+                        try:
+                            validators[validator_index](param_value)
+                        except (ValueError, TypeError) as e:
+                            raise ValueError(f"Validation failed for argument '{param_name}': {param_value}. Error: {str(e)}")
+            
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
-def _write_delta_table(
-    df: DataFrame,
-    path: str,
-    partition_by: Optional[List[str]] = None,
-    mode: str = "overwrite"
-) -> None:
-    """Helper function to write the DataFrame as a Delta table."""
-    writer = df.write.format("delta").mode(mode)
-    if partition_by:
-        writer = writer.partitionBy(partition_by)
-    writer.save(path)
 
-def _optimize_delta_table(
-    path: str,
-    z_order_by: Optional[List[str]] = None
-) -> None:
-    """Helper function to optimize the Delta table and apply Z-Ordering if specified."""
-    delta_table = DeltaTable.forPath(spark, path)
-    if z_order_by:
-        z_order_cols = ", ".join(z_order_by)
-        delta_table.optimize().executeZOrderBy(z_order_cols)
-    else:
-        delta_table.optimize().executeCompaction()
+def validate_positive(value: float) -> None:
+    if value <= 0:
+        raise ValueError("Value must be positive")
 
-# Example usage
-def transform_and_save_data(input_df: DataFrame, output_path: str) -> None:
+def validate_string(value: str) -> None:
+    if not isinstance(value, str):
+        raise TypeError("Value must be a string")
+
+@validate_args(validate_positive, validate_positive, validate_string)
+def calculate_volume(length: float, width: float, unit: str) -> Tuple[float, str]:
+    return length * width, unit
+
+# Usage
+print(calculate_volume(5, 3, "cm²"))  # Valid: (15, 'cm²')
+# print(calculate_volume(-1, 3, "cm²"))  # Raises ValueError
+# print(calculate_volume(5, 3, 42))  # Raises TypeError
+# print(calculate_volume(length=5, width=3, unit="cm²"))  # Valid: (15, 'cm²')
+
+
+
+from pyspark.sql import DataFrame
+from typing import Any, Dict
+
+def validate_pyspark_dataframe(df: Any) -> None:
     """
-    Example of how to use the save_delta_table function in a data processing pipeline.
-    
+    Validate that the input is a PySpark DataFrame and is not empty.
+
     Args:
-        input_df (DataFrame): Input DataFrame to be processed.
-        output_path (str): Path to save the processed Delta table.
+        df (Any): The object to validate.
+
+    Raises:
+        TypeError: If the input is not a PySpark DataFrame.
+        ValueError: If the DataFrame is empty.
     """
-    processed_df = (input_df
-        .transform(clean_data)
-        .transform(enrich_data)
-        .transform(aggregate_data)
-    )
+    if not isinstance(df, DataFrame):
+        raise TypeError(f"Expected PySpark DataFrame, got {type(df).__name__}")
     
-    save_delta_table(
-        df=processed_df,
-        path=output_path,
-        partition_by=["date"],
-        z_order_by=["id", "category"],
-        mode="overwrite"
-    )
+    if df.rdd.isEmpty():
+        raise ValueError("DataFrame is empty")
 
-# Helper functions for the data processing pipeline
-def clean_data(df: DataFrame) -> DataFrame:
-    """Clean the input DataFrame."""
-    # Implement data cleaning logic
+def validate_dictionary(d: Any) -> None:
+    """
+    Validate that the input is a dictionary and is not empty.
+
+    Args:
+        d (Any): The object to validate.
+
+    Raises:
+        TypeError: If the input is not a dictionary.
+        ValueError: If the dictionary is empty.
+    """
+    if not isinstance(d, dict):
+        raise TypeError(f"Expected dictionary, got {type(d).__name__}")
+    
+    if not d:
+        raise ValueError("Dictionary is empty")
+
+# Example usage with the validate_args decorator
+@validate_args(validate_pyspark_dataframe, validate_dictionary)
+def process_dataframe_with_params(df: DataFrame, params: Dict[str, Any]) -> DataFrame:
+    """
+    Process a PySpark DataFrame using the provided parameters.
+
+    Args:
+        df (DataFrame): The input PySpark DataFrame to process.
+        params (Dict[str, Any]): A dictionary of parameters for processing.
+
+    Returns:
+        DataFrame: The processed DataFrame.
+    """
+    # Example processing (replace with actual logic)
+    for column, value in params.items():
+        if column in df.columns:
+            df = df.filter(df[column] == value)
     return df
 
-def enrich_data(df: DataFrame) -> DataFrame:
-    """Enrich the DataFrame with additional information."""
-    # Implement data enrichment logic
-    return df
+# Usage example (assuming you have a SparkSession named 'spark')
+# from pyspark.sql import SparkSession
+# spark = SparkSession.builder.appName("ValidationExample").getOrCreate()
+# 
+# sample_df = spark.createDataFrame([(1, "A"), (2, "B")], ["id", "category"])
+# sample_params = {"category": "A"}
+# 
+# result = process_dataframe_with_params(sample_df, sample_params)
+# result.show()
 
-def aggregate_data(df: DataFrame) -> DataFrame:
-    """Perform aggregations on the DataFrame."""
-    # Implement aggregation logic
-    return df
 
 ```
 
