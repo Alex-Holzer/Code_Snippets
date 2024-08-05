@@ -1,97 +1,99 @@
 ```python
-from pyspark.sql import DataFrame
-from typing import Optional
-import dbutils
-
-# Constants
-DEFAULT_BASE_NAME = "prod_uc_analyticsuw_uc1"
-DEFAULT_BASE_PATH = "abfss://prod@eudldeg1koprod1.dfs.core.windows.net/PROD/usecases/AnalyticsUW_UC1"
-
-def construct_delta_table_path(
-    table_name: str,
-    base_name: str = DEFAULT_BASE_NAME,
-    base_path: str = DEFAULT_BASE_PATH
-) -> str:
-    """
-    Construct the full path for a Delta table.
-    
-    Args:
-        table_name (str): The name of the table.
-        base_name (str): The base name for the table. Defaults to DEFAULT_BASE_NAME.
-        base_path (str): The base path for the table. Defaults to DEFAULT_BASE_PATH.
-    
-    Returns:
-        str: The full path for the Delta table.
-    """
-    return f"{base_path}/{base_name}/{table_name}"
-
-def check_path_exists(path: str) -> bool:
-    """
-    Check if a path exists in Databricks file system.
-    
-    Args:
-        path (str): The path to check.
-    
-    Returns:
-        bool: True if the path exists, False otherwise.
-    """
-    try:
-        dbutils.fs.ls(path)
-        return True
-    except Exception:
-        return False
-
 
 from pyspark.sql import DataFrame
-from typing import Optional
+from delta.tables import DeltaTable
+from typing import List, Optional
 
-from pyspark.sql import DataFrame
-from typing import Optional
-
-def write_delta_table(
+def save_delta_table(
     df: DataFrame,
-    table_name: str,
-    base_name: str = DEFAULT_BASE_NAME,
-    base_path: str = DEFAULT_BASE_PATH,
-    overwrite_schema: bool = False,
-    overwrite_table: bool = False
+    path: str,
+    partition_by: Optional[List[str]] = None,
+    z_order_by: Optional[List[str]] = None,
+    mode: str = "overwrite"
 ) -> None:
     """
-    Write a DataFrame to a Delta table in Databricks with specified options.
+    Saves a DataFrame as a Delta table, performs optimization, and applies Z-Ordering.
+
+    Args:
+        df (DataFrame): The DataFrame to be saved.
+        path (str): The path where the Delta table should be saved.
+        partition_by (Optional[List[str]]): List of columns for partitioning.
+        z_order_by (Optional[List[str]]): List of columns for Z-Ordering.
+        mode (str): Write mode ("overwrite", "append", etc.). Defaults to "overwrite".
+
+    Returns:
+        None
+
+    Example:
+        >>> df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "value"])
+        >>> save_delta_table(df, "/path/to/delta", partition_by=["id"], z_order_by=["value"])
+    """
+    _write_delta_table(df, path, partition_by, mode)
+    _optimize_delta_table(path, z_order_by)
+    print(f"Delta table has been saved and optimized: {path}")
+
+def _write_delta_table(
+    df: DataFrame,
+    path: str,
+    partition_by: Optional[List[str]] = None,
+    mode: str = "overwrite"
+) -> None:
+    """Helper function to write the DataFrame as a Delta table."""
+    writer = df.write.format("delta").mode(mode)
+    if partition_by:
+        writer = writer.partitionBy(partition_by)
+    writer.save(path)
+
+def _optimize_delta_table(
+    path: str,
+    z_order_by: Optional[List[str]] = None
+) -> None:
+    """Helper function to optimize the Delta table and apply Z-Ordering if specified."""
+    delta_table = DeltaTable.forPath(spark, path)
+    if z_order_by:
+        z_order_cols = ", ".join(z_order_by)
+        delta_table.optimize().executeZOrderBy(z_order_cols)
+    else:
+        delta_table.optimize().executeCompaction()
+
+# Example usage
+def transform_and_save_data(input_df: DataFrame, output_path: str) -> None:
+    """
+    Example of how to use the save_delta_table function in a data processing pipeline.
     
     Args:
-        df (DataFrame): The DataFrame to write.
-        table_name (str): The name of the table.
-        base_name (str): The base name for the table. Defaults to DEFAULT_BASE_NAME.
-        base_path (str): The base path for the table. Defaults to DEFAULT_BASE_PATH.
-        overwrite_schema (bool): Whether to overwrite the schema. Defaults to False.
-        overwrite_table (bool): Whether to overwrite the entire table. Defaults to False.
+        input_df (DataFrame): Input DataFrame to be processed.
+        output_path (str): Path to save the processed Delta table.
     """
-    full_table_name = f"{base_name}.{table_name}"
-    full_table_path = construct_delta_table_path(table_name, base_name, base_path)
+    processed_df = (input_df
+        .transform(clean_data)
+        .transform(enrich_data)
+        .transform(aggregate_data)
+    )
     
-    write_options = {
-        "format": "delta",
-        "delta.columnMapping.mode": "name",
-    }
-    
-    if overwrite_table:
-        write_options["mode"] = "overwrite"
-        write_options["overwriteSchema"] = "true"
-    elif overwrite_schema:
-        write_options["mode"] = "overwrite"
-        write_options["overwriteSchema"] = "true"
-    else:
-        write_options["mode"] = "append"
-        write_options["mergeSchema"] = "true"
-    
-    if check_path_exists(full_table_path):
-        # Table already exists
-        df.write.options(**write_options).saveAsTable(full_table_name)
-    else:
-        # Table doesn't exist, specify the path
-        df.write.options(**write_options).saveAsTable(full_table_name, path=full_table_path)
+    save_delta_table(
+        df=processed_df,
+        path=output_path,
+        partition_by=["date"],
+        z_order_by=["id", "category"],
+        mode="overwrite"
+    )
 
+# Helper functions for the data processing pipeline
+def clean_data(df: DataFrame) -> DataFrame:
+    """Clean the input DataFrame."""
+    # Implement data cleaning logic
+    return df
+
+def enrich_data(df: DataFrame) -> DataFrame:
+    """Enrich the DataFrame with additional information."""
+    # Implement data enrichment logic
+    return df
+
+def aggregate_data(df: DataFrame) -> DataFrame:
+    """Perform aggregations on the DataFrame."""
+    # Implement aggregation logic
+    return df
 
 ```
 
