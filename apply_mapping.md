@@ -1,6 +1,6 @@
 ```python
 
-import pytest
+import unittest
 from pyspark.sql import DataFrame
 from unittest.mock import Mock
 from typing import Any, Dict
@@ -17,67 +17,74 @@ class MockDataFrame(DataFrame):
     def rdd(self):
         return Mock(isEmpty=lambda: self.is_empty)
 
-# Tests for validate_pyspark_dataframe
-def test_validate_pyspark_dataframe_valid():
-    df = MockDataFrame()
-    validate_pyspark_dataframe(df)  # Should not raise any exception
+class TestValidationFunctions(unittest.TestCase):
+    def test_validate_pyspark_dataframe_valid(self):
+        df = MockDataFrame()
+        try:
+            validate_pyspark_dataframe(df)
+        except Exception as e:
+            self.fail(f"validate_pyspark_dataframe raised {type(e).__name__} unexpectedly!")
 
-def test_validate_pyspark_dataframe_invalid_type():
-    with pytest.raises(TypeError, match="Expected PySpark DataFrame, got list"):
-        validate_pyspark_dataframe([1, 2, 3])
+    def test_validate_pyspark_dataframe_invalid_type(self):
+        with self.assertRaises(TypeError) as context:
+            validate_pyspark_dataframe([1, 2, 3])
+        self.assertIn("Expected PySpark DataFrame", str(context.exception))
 
-def test_validate_pyspark_dataframe_empty():
-    df = MockDataFrame(is_empty=True)
-    with pytest.raises(ValueError, match="DataFrame is empty"):
-        validate_pyspark_dataframe(df)
+    def test_validate_pyspark_dataframe_empty(self):
+        df = MockDataFrame(is_empty=True)
+        with self.assertRaises(ValueError) as context:
+            validate_pyspark_dataframe(df)
+        self.assertEqual(str(context.exception), "DataFrame is empty")
 
-# Tests for validate_dictionary
-def test_validate_dictionary_valid():
-    d = {"key": "value"}
-    validate_dictionary(d)  # Should not raise any exception
+    def test_validate_dictionary_valid(self):
+        d = {"key": "value"}
+        try:
+            validate_dictionary(d)
+        except Exception as e:
+            self.fail(f"validate_dictionary raised {type(e).__name__} unexpectedly!")
 
-def test_validate_dictionary_invalid_type():
-    with pytest.raises(TypeError, match="Expected dictionary, got list"):
-        validate_dictionary([1, 2, 3])
+    def test_validate_dictionary_invalid_type(self):
+        with self.assertRaises(TypeError) as context:
+            validate_dictionary([1, 2, 3])
+        self.assertIn("Expected dictionary", str(context.exception))
 
-def test_validate_dictionary_empty():
-    with pytest.raises(ValueError, match="Dictionary is empty"):
-        validate_dictionary({})
+    def test_validate_dictionary_empty(self):
+        with self.assertRaises(ValueError) as context:
+            validate_dictionary({})
+        self.assertEqual(str(context.exception), "Dictionary is empty")
 
-# Tests for validate_args decorator
-@validate_args(validate_pyspark_dataframe, validate_dictionary)
-def dummy_function(df: DataFrame, params: Dict[str, Any]) -> str:
-    return "Success"
+    def test_validate_args_decorator(self):
+        @validate_args(validate_pyspark_dataframe, validate_dictionary)
+        def dummy_function(df: DataFrame, params: Dict[str, Any]) -> str:
+            return "Success"
 
-def test_validate_args_decorator_valid():
-    df = MockDataFrame()
-    params = {"key": "value"}
-    assert dummy_function(df, params) == "Success"
+        df = MockDataFrame()
+        params = {"key": "value"}
 
-def test_validate_args_decorator_invalid_df():
-    params = {"key": "value"}
-    with pytest.raises(ValueError, match="Validation failed for argument:"):
-        dummy_function([1, 2, 3], params)
+        # Test valid inputs
+        self.assertEqual(dummy_function(df, params), "Success")
 
-def test_validate_args_decorator_invalid_dict():
-    df = MockDataFrame()
-    with pytest.raises(ValueError, match="Validation failed for argument:"):
-        dummy_function(df, [1, 2, 3])
+        # Test invalid DataFrame
+        with self.assertRaises(ValueError) as context:
+            dummy_function([1, 2, 3], params)
+        self.assertIn("Validation failed for argument", str(context.exception))
 
-# Additional test for keyword arguments
-def test_validate_args_decorator_with_kwargs():
-    df = MockDataFrame()
-    params = {"key": "value"}
-    assert dummy_function(df=df, params=params) == "Success"
+        # Test invalid dictionary
+        with self.assertRaises(ValueError) as context:
+            dummy_function(df, [1, 2, 3])
+        self.assertIn("Validation failed for argument", str(context.exception))
 
-# Test for partial application of arguments
-def test_validate_args_decorator_partial_application():
-    df = MockDataFrame()
-    with pytest.raises(ValueError, match="Validation failed for argument"):
-        dummy_function(df)  # Missing 'params' argument
+        # Test with keyword arguments
+        self.assertEqual(dummy_function(df=df, params=params), "Success")
 
-if __name__ == "__main__":
-    pytest.main()
+        # Test partial application
+        with self.assertRaises(ValueError) as context:
+            dummy_function(df)
+        self.assertIn("Validation failed for argument", str(context.exception))
+
+if __name__ == '__main__':
+    unittest.main(argv=[''], exit=False)
+
 
 ```
 
