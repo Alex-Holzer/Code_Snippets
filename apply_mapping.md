@@ -1,73 +1,102 @@
 ```python
 
-import unittest
 from pyspark.sql import DataFrame
-from unittest.mock import Mock
-from typing import Any, Dict
+from typing import Any, Callable
 
-# Import the functions to be tested
-from your_module import validate_pyspark_dataframe, validate_dictionary, validate_args
+def validate_dictionary(func: Callable) -> Callable:
+    """
+    Decorator to validate that the input is a non-empty dictionary.
+    
+    Args:
+        func (Callable): The function to be decorated.
+    
+    Returns:
+        Callable: The wrapped function.
+    """
+    def wrapper(arg: Any) -> None:
+        if not isinstance(arg, dict):
+            raise TypeError(f"Expected dictionary, got {type(arg).__name__}")
+        if not arg:
+            raise ValueError("Dictionary is empty")
+        return func(arg)
+    return wrapper
 
-class MockDataFrame(DataFrame):
-    def __init__(self, is_empty=False):
-        self.is_empty = is_empty
+def validate_pyspark_dataframe(func: Callable) -> Callable:
+    """
+    Decorator to validate that the input is a non-empty PySpark DataFrame.
+    
+    Args:
+        func (Callable): The function to be decorated.
+    
+    Returns:
+        Callable: The wrapped function.
+    """
+    def wrapper(arg: Any) -> None:
+        if not isinstance(arg, DataFrame):
+            raise TypeError(f"Expected PySpark DataFrame, got {type(arg).__name__}")
+        if arg.rdd.isEmpty():
+            raise ValueError("DataFrame is empty")
+        return func(arg)
+    return wrapper
 
-    @property
-    def rdd(self):
-        return Mock(isEmpty=lambda: self.is_empty)
+# Test functions
+def test_validate_dictionary():
+    @validate_dictionary
+    def dummy_dict_func(d):
+        return "Valid dictionary"
 
-class TestValidateArgsDecorator(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        @validate_args(validate_pyspark_dataframe, validate_dictionary)
-        def dummy_function(df: DataFrame, params: Dict[str, Any]) -> str:
-            return "Success"
-        cls.dummy_function = dummy_function
+    # Test valid dictionary
+    assert dummy_dict_func({"key": "value"}) == "Valid dictionary"
 
-    def test_valid_inputs(self):
-        df = MockDataFrame()
-        params = {"key": "value"}
-        self.assertEqual(self.dummy_function(df, params), "Success")
+    # Test invalid type
+    try:
+        dummy_dict_func([1, 2, 3])
+    except TypeError as e:
+        assert str(e) == "Expected dictionary, got list"
+    else:
+        assert False, "TypeError not raised"
 
-    def test_invalid_dataframe(self):
-        params = {"key": "value"}
-        with self.assertRaises(ValueError) as context:
-            self.dummy_function([1, 2, 3], params)
-        self.assertIn("Validation failed for argument", str(context.exception))
-        self.assertIn("Expected PySpark DataFrame", str(context.exception))
+    # Test empty dictionary
+    try:
+        dummy_dict_func({})
+    except ValueError as e:
+        assert str(e) == "Dictionary is empty"
+    else:
+        assert False, "ValueError not raised"
 
-    def test_invalid_dictionary(self):
-        df = MockDataFrame()
-        with self.assertRaises(ValueError) as context:
-            self.dummy_function(df, [1, 2, 3])
-        self.assertIn("Validation failed for argument", str(context.exception))
-        self.assertIn("Expected dictionary", str(context.exception))
+def test_validate_pyspark_dataframe():
+    class MockDataFrame:
+        def __init__(self, is_empty=False):
+            self.rdd = type('MockRDD', (), {'isEmpty': lambda: is_empty})()
 
-    def test_with_keyword_arguments(self):
-        df = MockDataFrame()
-        params = {"key": "value"}
-        self.assertEqual(self.dummy_function(df=df, params=params), "Success")
+    @validate_pyspark_dataframe
+    def dummy_df_func(df):
+        return "Valid DataFrame"
 
-    def test_partial_application(self):
-        df = MockDataFrame()
-        with self.assertRaises(TypeError) as context:
-            self.dummy_function(df)
-        self.assertIn("missing 1 required positional argument", str(context.exception))
+    # Test valid DataFrame
+    assert dummy_df_func(MockDataFrame()) == "Valid DataFrame"
 
-    def test_empty_dataframe(self):
-        df = MockDataFrame(is_empty=True)
-        params = {"key": "value"}
-        with self.assertRaises(ValueError) as context:
-            self.dummy_function(df, params)
-        self.assertIn("DataFrame is empty", str(context.exception))
+    # Test invalid type
+    try:
+        dummy_df_func([1, 2, 3])
+    except TypeError as e:
+        assert str(e) == "Expected PySpark DataFrame, got list"
+    else:
+        assert False, "TypeError not raised"
 
-    def test_empty_dictionary(self):
-        df = MockDataFrame()
-        with self.assertRaises(ValueError) as context:
-            self.dummy_function(df, {})
-        self.assertIn("Dictionary is empty", str(context.exception))
+    # Test empty DataFrame
+    try:
+        dummy_df_func(MockDataFrame(is_empty=True))
+    except ValueError as e:
+        assert str(e) == "DataFrame is empty"
+    else:
+        assert False, "ValueError not raised"
 
-if __name__ == '__main__':
-    unittest.main(argv=[''], exit=False)
+# Run tests
+if __name__ == "__main__":
+    test_validate_dictionary()
+    test_validate_pyspark_dataframe()
+    print("All tests passed!")
+
 ```
 
