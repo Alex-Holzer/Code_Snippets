@@ -236,5 +236,190 @@ def validate_customer_data(df: DataFrame, config: Dict[str, Any]) -> None:
 # }
 # validate_customer_data(customer_df, config)
 
+
+---------------
+from pyspark.sql import DataFrame
+from pyspark.sql.readwriter import DataFrameWriter
+from typing import Optional, List
+
+def _validate_input(df: DataFrame, file_path: str) -> None:
+    """
+    Validate the input DataFrame and file path.
+
+    Args:
+        df (DataFrame): The Spark DataFrame to be validated.
+        file_path (str): The file path to be validated.
+
+    Raises:
+        ValueError: If the DataFrame is empty or if the file_path is invalid.
+    """
+    if df.rdd.isEmpty():
+        raise ValueError("DataFrame is empty. Cannot save an empty DataFrame.")
+    if not file_path:
+        raise ValueError("Invalid file path. Please provide a valid path.")
+
+def _save_dataframe(
+    df: DataFrame,
+    file_path: str,
+    header: bool,
+    separator: str,
+    overwrite: bool
+) -> None:
+    """
+    Save the DataFrame as a CSV file.
+
+    Args:
+        df (DataFrame): The Spark DataFrame to be saved.
+        file_path (str): The path where the CSV file will be saved.
+        header (bool): Whether to include a header in the CSV file.
+        separator (str): The separator to use in the CSV file.
+        overwrite (bool): Whether to overwrite existing files.
+    """
+    write_mode = "overwrite" if overwrite else "error"
+    df.repartition(1).write.format('csv').mode(write_mode).save(
+        file_path, 
+        header=header, 
+        sep=separator
+    )
+
+def _list_files(directory: str) -> List[object]:
+    """
+    List all files in the given directory.
+
+    Args:
+        directory (str): The directory to list files from.
+
+    Returns:
+        List[object]: A list of file objects in the directory.
+    """
+    return dbutils.fs.ls(directory)
+
+def _find_csv_file(files: List[object]) -> Optional[object]:
+    """
+    Find the first CSV file in the list of files.
+
+    Args:
+        files (List[object]): A list of file objects to search through.
+
+    Returns:
+        Optional[object]: The first CSV file found, or None if no CSV file is found.
+    """
+    return next((f for f in files if f.name.endswith(".csv")), None)
+
+def _rename_and_replace_file(file_path: str, csv_file: object) -> None:
+    """
+    Rename the CSV file and replace the original directory.
+
+    Args:
+        file_path (str): The original file path.
+        csv_file (object): The CSV file object to be renamed and moved.
+    """
+    temp_path = file_path + "_tmp"
+    dbutils.fs.cp(file_path + "/" + csv_file.name, temp_path)
+    dbutils.fs.rm(file_path, recurse=True)
+    dbutils.fs.mv(temp_path, file_path)
+
+def _ensure_single_file(file_path: str) -> None:
+    """
+    Ensure only a single CSV file remains in the specified directory.
+
+    Args:
+        file_path (str): The path to the directory containing the CSV file.
+
+    Raises:
+        ValueError: If no CSV file is found in the specified directory.
+    """
+    files = _list_files(file_path)
+    csv_file = _find_csv_file(files)
+    if csv_file:
+        _rename_and_replace_file(file_path, csv_file)
+    else:
+        raise ValueError(f"No CSV file found in {file_path}")
+
+def save_as_single_csv_file(
+    df: DataFrame,
+    file_path: str,
+    header: bool = True,
+    separator: str = ";",
+    overwrite: bool = True
+) -> None:
+    """
+    Save a Spark DataFrame as a single CSV file.
+
+    This function repartitions the DataFrame to a single partition,
+    saves it as a CSV file, and then ensures only one CSV file remains
+    in the specified directory.
+
+    Args:
+        df (DataFrame): The Spark DataFrame to be saved.
+        file_path (str): The path where the CSV file will be saved.
+        header (bool, optional): Whether to include a header in the CSV file. Defaults to True.
+        separator (str, optional): The separator to use in the CSV file. Defaults to ";".
+        overwrite (bool, optional): Whether to overwrite existing files. Defaults to True.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If the DataFrame is empty or if the file_path is invalid.
+    """
+    _validate_input(df, file_path)
+    _save_dataframe(df, file_path, header, separator, overwrite)
+    _ensure_single_file(file_path)
+
+# Add the method to DataFrameWriter for backwards compatibility
+DataFrameWriter.singleFileSave = save_as_single_csv_file
+
+
+# Example
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+
+# Create a SparkSession (in Databricks this is already available as 'spark')
+spark = SparkSession.builder.appName("SingleCSVFileExample").getOrCreate()
+
+# Create a sample DataFrame
+data = [
+    ("Alice", 28, "New York"),
+    ("Bob", 35, "San Francisco"),
+    ("Charlie", 42, "London"),
+    ("Diana", 31, "Paris")
+]
+
+schema = StructType([
+    StructField("Name", StringType(), True),
+    StructField("Age", IntegerType(), True),
+    StructField("City", StringType(), True)
+])
+
+df = spark.createDataFrame(data, schema)
+
+# Display the DataFrame
+print("Sample DataFrame:")
+df.show()
+
+# Define the file path where you want to save the CSV
+# Note: In Databricks, you might use a path like "/dbfs/mnt/your-mount-point/your-file.csv"
+file_path = "/path/to/your/output/single_file.csv"
+
+# Use the save_as_single_csv_file function
+save_as_single_csv_file(
+    df=df,
+    file_path=file_path,
+    header=True,
+    separator=",",
+    overwrite=True
+)
+
+print(f"DataFrame saved as a single CSV file at: {file_path}")
+
+# Optionally, verify the saved file
+saved_df = spark.read.csv(file_path, header=True, inferSchema=True)
+print("\nContents of the saved CSV file:")
+saved_df.show()
+
+# If you're using the DataFrameWriter method (for backwards compatibility)
+# df.write.singleFileSave(file_path, header='true', sep=",")
+
 ```
 
