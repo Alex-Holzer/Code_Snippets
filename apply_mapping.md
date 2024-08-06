@@ -421,5 +421,89 @@ saved_df.show()
 # If you're using the DataFrameWriter method (for backwards compatibility)
 # df.write.singleFileSave(file_path, header='true', sep=",")
 
+
+---------
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from typing import Dict, Any
+import inspect
+
+def _get_workspace_variables() -> Dict[str, Any]:
+    """
+    Retrieve all defined variables in the current workspace.
+    
+    Returns:
+        Dict[str, Any]: A dictionary of variable names and their values.
+    """
+    return {name: value for name, value in inspect.currentframe().f_back.f_back.f_locals.items()
+            if not name.startswith('_')}
+
+def _format_variable_info(name: str, value: Any) -> str:
+    """
+    Format the variable information as a string.
+    
+    Args:
+        name (str): The name of the variable.
+        value (Any): The value of the variable.
+    
+    Returns:
+        str: A formatted string with variable information.
+    """
+    if isinstance(value, DataFrame):
+        return f"{name}: DataFrame[{', '.join([f'{f.name}: {f.dataType}' for f in value.schema.fields])}]"
+    elif callable(value):
+        return f"{name}: function"
+    else:
+        return f"{name}: {type(value).__name__} = {value}"
+
+def _create_variables_dataframe(variables: Dict[str, Any]) -> DataFrame:
+    """
+    Create a DataFrame to display workspace variables.
+    
+    Args:
+        variables (Dict[str, Any]): A dictionary of variable names and their values.
+    
+    Returns:
+        DataFrame: A DataFrame containing variable names and their formatted information.
+    """
+    variable_info = [
+        (name, _format_variable_info(name, value))
+        for name, value in variables.items()
+    ]
+    return spark.createDataFrame(variable_info, ["variable_name", "variable_info"])
+
+def show_workspace_variables(df: DataFrame) -> DataFrame:
+    """
+    Display all defined variables in the current workspace.
+    
+    This function can be used with the transform method in a PySpark pipeline.
+    
+    Args:
+        df (DataFrame): Input DataFrame (not used, but required for transform method compatibility)
+    
+    Returns:
+        DataFrame: The input DataFrame (unchanged)
+    
+    Example:
+        >>> df = spark.createDataFrame([(1,), (2,)], ['id'])
+        >>> df.transform(show_workspace_variables).show()
+        +---+
+        | id|
+        +---+
+        |  1|
+        |  2|
+        +---+
+        
+        # The workspace variables are displayed separately
+    """
+    variables = _get_workspace_variables()
+    _create_variables_dataframe(variables).show(truncate=False)
+    return df
+
+# Add the transform method to DataFrame
+DataFrame.transform = lambda self, f, *args, **kwargs: f(self, *args, **kwargs)
+
+
+
 ```
 
