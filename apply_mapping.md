@@ -423,20 +423,10 @@ saved_df.show()
 
 
 ---------
-from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
-from typing import Dict, Any
-import inspect
 
-def _get_workspace_variables() -> Dict[str, Any]:
-    """
-    Retrieve all defined variables in the current workspace.
-    
-    Returns:
-        Dict[str, Any]: A dictionary of variable names and their values.
-    """
-    return {name: value for name, value in inspect.currentframe().f_back.f_back.f_locals.items()
-            if not name.startswith('_')}
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import lit
+from typing import Dict, Any
 
 def _format_variable_info(name: str, value: Any) -> str:
     """
@@ -450,60 +440,39 @@ def _format_variable_info(name: str, value: Any) -> str:
         str: A formatted string with variable information.
     """
     if isinstance(value, DataFrame):
-        return f"{name}: DataFrame[{', '.join([f'{f.name}: {f.dataType}' for f in value.schema.fields])}]"
+        return f"DataFrame[{', '.join([f'{f.name}: {f.dataType}' for f in value.schema.fields])}]"
     elif callable(value):
-        return f"{name}: function"
+        return "function"
+    elif isinstance(value, (int, float, str, bool)):
+        return f"{type(value).__name__} = {value}"
     else:
-        return f"{name}: {type(value).__name__} = {value}"
+        return type(value).__name__
 
-def _create_variables_dataframe(variables: Dict[str, Any]) -> DataFrame:
+def show_notebook_variables() -> DataFrame:
     """
-    Create a DataFrame to display workspace variables.
-    
-    Args:
-        variables (Dict[str, Any]): A dictionary of variable names and their values.
+    Display all defined variables in the current Databricks notebook.
     
     Returns:
         DataFrame: A DataFrame containing variable names and their formatted information.
-    """
-    variable_info = [
-        (name, _format_variable_info(name, value))
-        for name, value in variables.items()
-    ]
-    return spark.createDataFrame(variable_info, ["variable_name", "variable_info"])
-
-def show_workspace_variables(df: DataFrame) -> DataFrame:
-    """
-    Display all defined variables in the current workspace.
-    
-    This function can be used with the transform method in a PySpark pipeline.
-    
-    Args:
-        df (DataFrame): Input DataFrame (not used, but required for transform method compatibility)
-    
-    Returns:
-        DataFrame: The input DataFrame (unchanged)
     
     Example:
-        >>> df = spark.createDataFrame([(1,), (2,)], ['id'])
-        >>> df.transform(show_workspace_variables).show()
-        +---+
-        | id|
-        +---+
-        |  1|
-        |  2|
-        +---+
-        
-        # The workspace variables are displayed separately
+        >>> show_notebook_variables().show(truncate=False)
+        +---------------+----------------------------------------+
+        |variable_name  |variable_info                           |
+        +---------------+----------------------------------------+
+        |df             |DataFrame[id: bigint]                   |
+        |x              |int = 10                                |
+        |my_function    |function                                |
+        +---------------+----------------------------------------+
     """
-    variables = _get_workspace_variables()
-    _create_variables_dataframe(variables).show(truncate=False)
-    return df
-
-# Add the transform method to DataFrame
-DataFrame.transform = lambda self, f, *args, **kwargs: f(self, *args, **kwargs)
-
-
+    global_vars = globals()
+    variable_info = [
+        (name, _format_variable_info(name, value))
+        for name, value in global_vars.items()
+        if not (name.startswith('_') or name in ('show_notebook_variables', '_format_variable_info'))
+    ]
+    
+    return spark.createDataFrame(variable_info, ["variable_name", "variable_info"])
 
 ```
 
