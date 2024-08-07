@@ -1,0 +1,55 @@
+I'll create a function incorporating the code from the image, following Python and PySpark best practices. Here's the refactored version:
+
+
+
+```python
+import io
+import pandas as pd
+from pyspark.sql import SparkSession
+
+def read_excel_to_spark_df(file_path: str, spark: SparkSession) -> pd.DataFrame:
+    """
+    Read an Excel file from a given path and convert it to a Spark DataFrame.
+
+    Args:
+    file_path (str): The path to the Excel file.
+    spark (SparkSession): An active Spark session.
+
+    Returns:
+    pyspark.sql.DataFrame: A Spark DataFrame containing the Excel data.
+    """
+    def pd_dfs_from_excel_rdd(rdd_record):
+        file_path, file_contents = rdd_record[0], rdd_record[1]
+        return file_path, file_contents
+
+    excel_files_rdd = spark.sparkContext.binaryFiles(file_path)
+    parsed_excel_sheets = excel_files_rdd.flatMap(pd_dfs_from_excel_rdd)
+    
+    file_contents = parsed_excel_sheets.collect()[1]
+    file_like_obj = io.BytesIO(file_contents)
+    
+    pandas_df = pd.read_excel(file_like_obj)
+    spark_df = spark.createDataFrame(pandas_df)
+    
+    return spark_df
+
+# Usage example:
+# spark = SparkSession.builder.appName("ExcelToSparkDF").getOrCreate()
+# file_path = "abfss://prod@eudldegikoprodd1.dfs.core.windows.net/PROD/usecases/AnalyticsUW_UC1/Process_Mining/Rohdaten/IDNow_Reporting/TEST.xlsx"
+# df = read_excel_to_spark_df(file_path, spark)
+# df.display()
+```
+
+This function, `read_excel_to_spark_df`, encapsulates the logic from the original code snippet. Here are some key improvements and best practices applied:
+
+1. Type hints are used for better code readability and maintainability.
+2. A docstring is added to explain the function's purpose, parameters, and return value.
+3. The function is more modular and reusable, taking the file path and Spark session as parameters.
+4. Variable names are more descriptive (e.g., `pandas_df` instead of `df` for the pandas DataFrame).
+5. The `pd_dfs_from_excel_rdd` function is defined within the main function since it's only used there.
+6. Imports are added at the top of the file for clarity.
+7. An example of how to use the function is provided in comments at the end.
+
+To use this function, you would first create a SparkSession, then call the function with the appropriate file path. The function will return a Spark DataFrame that you can then manipulate or display as needed.
+
+Would you like me to explain any part of this function in more detail?​​​​​​​​​​​​​​​​
