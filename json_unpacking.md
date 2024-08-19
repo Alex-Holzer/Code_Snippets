@@ -203,10 +203,10 @@ def _flatten_json(df: DataFrame, column_name: str, parent_prefix: str = "") -> D
 
 def unpack_json_cell(df: DataFrame, json_column: str = 'data') -> DataFrame:
     """
-    Unpack a JSON string cell into multiple columns in a PySpark DataFrame.
+    Unpack JSON string cells into multiple columns in a PySpark DataFrame.
 
     This function takes a DataFrame with a JSON string column, infers its schema,
-    and flattens the nested structure into separate columns. It handles nested
+    and flattens the nested structure into separate columns for all rows. It handles nested
     objects and arrays recursively, fully unpacking all levels of the JSON structure.
 
     Args:
@@ -215,31 +215,34 @@ def unpack_json_cell(df: DataFrame, json_column: str = 'data') -> DataFrame:
                                      Defaults to 'data'.
 
     Returns:
-        DataFrame: A new DataFrame with the JSON structure fully flattened into separate columns.
+        DataFrame: A new DataFrame with the JSON structure fully flattened into separate columns
+                   for all rows.
 
     Raises:
         ValueError: If the specified JSON column is not found in the DataFrame.
-        json.JSONDecodeError: If the sample JSON is invalid.
 
     Example:
-        >>> json_df = spark.createDataFrame([('{"name": "Alice", "details": {"age": 30, "name": "Alice Smith"}}',)], ['data'])
+        >>> json_df = spark.createDataFrame([
+        ...     ('{"name": "Alice", "details": {"age": 30, "city": "New York"}}',),
+        ...     ('{"name": "Bob", "details": {"age": 25, "city": "San Francisco"}}',)
+        ... ], ['data'])
         >>> flattened_df = unpack_json_cell(json_df)
         >>> flattened_df.show(truncate=False)
         +-----+------------+-------------------+
-        |name |details_age |details_name       |
+        |name |details_age |details_city       |
         +-----+------------+-------------------+
-        |Alice|30          |Alice Smith        |
+        |Alice|30          |New York           |
+        |Bob  |25          |San Francisco      |
         +-----+------------+-------------------+
     """
     if json_column not in df.columns:
         raise ValueError(f"Column '{json_column}' not found in the DataFrame.")
 
-    try:
-        sample_json = df.select(json_column).first()[0]
-        json.loads(sample_json)  # Validate JSON
-        schema = expr(f"schema_of_json('{sample_json}')")
-    except json.JSONDecodeError as e:
-        raise json.JSONDecodeError(f"Invalid JSON in column '{json_column}': {str(e)}", e.doc, e.pos)
+    # Infer schema from the entire column, not just the first row
+    schema = df.select(json_column).schema[0].dataType
+    if isinstance(schema, StringType):
+        # If the column is a string, we need to infer the JSON schema
+        schema = df.select(schema_of_json(col(json_column))).first()[0]
     
     parsed_df = df.withColumn("_temp_parsed", from_json(col(json_column), schema))
     flattened_df = _flatten_json(parsed_df, "_temp_parsed")
@@ -249,6 +252,4 @@ def unpack_json_cell(df: DataFrame, json_column: str = 'data') -> DataFrame:
 # Example usage:
 # df_flattened = unpack_json_cell(df)
 # df_flattened.show(truncate=False)
-
-
 ```
