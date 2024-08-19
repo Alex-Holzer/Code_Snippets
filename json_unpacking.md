@@ -161,7 +161,6 @@ def unpack_json_cell(df: DataFrame, json_column: str = 'data') -> DataFrame:
 
 
 ---
-
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import col, explode, expr, from_json
 from pyspark.sql.types import StructType, ArrayType
@@ -185,11 +184,11 @@ def _flatten_json(df: DataFrame, column_name: str, parent_prefix: str = "") -> D
     if not isinstance(schema, (StructType, ArrayType)):
         return df
 
-    prefix = f"{parent_prefix}_" if parent_prefix else ""
+    prefix = f"{parent_prefix}_{column_name}" if parent_prefix else column_name
 
     if isinstance(schema, StructType):
         expanded = [
-            col(f"{column_name}.{field.name}").alias(f"{prefix}{field.name}")
+            col(f"{column_name}.{field.name}").alias(f"{prefix}_{field.name}")
             for field in schema.fields
         ]
         df = df.select("*", *expanded).drop(column_name)
@@ -197,8 +196,8 @@ def _flatten_json(df: DataFrame, column_name: str, parent_prefix: str = "") -> D
         df = df.withColumn(column_name, explode(col(column_name)))
 
     for column in df.columns:
-        if column.startswith(prefix):
-            df = _flatten_json(df, column, prefix.rstrip("_"))
+        if column.startswith(f"{prefix}_"):
+            df = _flatten_json(df, column, prefix)
 
     return df
 
@@ -223,14 +222,14 @@ def unpack_json_cell(df: DataFrame, json_column: str = 'data') -> DataFrame:
         json.JSONDecodeError: If the sample JSON is invalid.
 
     Example:
-        >>> json_df = spark.createDataFrame([('{"name": "Alice", "details": {"age": 30, "city": "New York"}}',)], ['data'])
+        >>> json_df = spark.createDataFrame([('{"name": "Alice", "details": {"age": 30, "name": "Alice Smith"}}',)], ['data'])
         >>> flattened_df = unpack_json_cell(json_df)
         >>> flattened_df.show(truncate=False)
-        +-----+---+--------+
-        |name |age|city    |
-        +-----+---+--------+
-        |Alice|30 |New York|
-        +-----+---+--------+
+        +-----+------------+-------------------+
+        |name |details_age |details_name       |
+        +-----+------------+-------------------+
+        |Alice|30          |Alice Smith        |
+        +-----+------------+-------------------+
     """
     if json_column not in df.columns:
         raise ValueError(f"Column '{json_column}' not found in the DataFrame.")
