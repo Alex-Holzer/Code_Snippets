@@ -1,6 +1,7 @@
 ```python
 
-from pyspark.sql.functions import col, explode, expr
+
+from pyspark.sql.functions import col, explode, expr, from_json
 from pyspark.sql.types import StructType, ArrayType
 
 def flatten_json(df, column_name):
@@ -38,27 +39,28 @@ def flatten_json(df, column_name):
 
     return df
 
-# Usage example
-def unpack_json_cell(df, json_column='json_column'):
+def unpack_json_cell(df, json_column='data'):
     """
-    Unpack a JSON cell into multiple columns in a PySpark DataFrame.
+    Unpack a JSON string cell into multiple columns in a PySpark DataFrame.
     
-    :param df: PySpark DataFrame with a JSON column
-    :param json_column: Name of the column containing the JSON data (default: 'json_column')
+    :param df: PySpark DataFrame with a JSON string column
+    :param json_column: Name of the column containing the JSON data (default: 'data')
     :return: Flattened DataFrame
     """
-    # Ensure the JSON column is properly parsed
-    df = df.withColumn(json_column, expr(f"from_json({json_column}, schema_of_json(element_at({json_column}, 1)))"))
+    # Infer the schema from the JSON string
+    sample_json = df.select(json_column).first()[0]
+    schema = expr(f"schema_of_json('{sample_json}')")
     
-    # Flatten the JSON structure
-    flattened_df = flatten_json(df, json_column)
+    # Parse the JSON string and flatten the structure
+    parsed_df = df.withColumn("parsed", from_json(col(json_column), schema))
+    flattened_df = flatten_json(parsed_df, "parsed")
+    
+    # Drop the original JSON column and the intermediate parsed column
+    flattened_df = flattened_df.drop(json_column, "parsed")
     
     return flattened_df
 
 # Example usage:
-# Assuming 'df' is your original DataFrame with a column named 'json_column' containing the JSON data
+# Assuming 'df' is your original DataFrame with a column named 'data' containing the JSON string
 # flattened_df = unpack_json_cell(df)
-# flattened_df.show()
-
-
-```
+# flattened_df.show()```
