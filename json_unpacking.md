@@ -1,255 +1,74 @@
 ```python
 
+from pyspark.sql.functions import schema_of_json, from_json, col, lit
+from pyspark.sql.types import StructType
+from typing import Tuple, Union
 
-from pyspark.sql.functions import col, explode, expr, from_json
-from pyspark.sql.types import StructType, ArrayType
-
-def flatten_json(df, column_name):
+def infer_json_schema(
+    df: "pyspark.sql.DataFrame",
+    json_column: str
+) -> Tuple[StructType, "pyspark.sql.DataFrame"]:
     """
-    Recursively flatten a nested JSON structure in a PySpark DataFrame.
-    
-    :param df: PySpark DataFrame
-    :param column_name: Name of the column containing the JSON structure
-    :return: Flattened DataFrame
+    Infers the schema of JSON data in a specified column of a PySpark DataFrame
+    and returns both the inferred schema and a new DataFrame with the JSON data parsed.
+
+    Args:
+        df (pyspark.sql.DataFrame): Input DataFrame containing the JSON column.
+        json_column (str): Name of the column containing JSON data.
+
+    Returns:
+        Tuple[StructType, pyspark.sql.DataFrame]: A tuple containing:
+            - The inferred JSON schema as a StructType
+            - A new DataFrame with an additional column 'parsed_json' containing the parsed JSON data
+
+    Raises:
+        ValueError: If the specified JSON column doesn't exist in the DataFrame.
+
+    Example:
+        >>> df = spark.createDataFrame([("1", '{"name": "John", "age": 30}')], ["id", "json_data"])
+        >>> json_schema, parsed_df = infer_json_schema(df, "json_data")
+        >>> print(json_schema)
+        >>> parsed_df.show()
     """
-    # Get the schema of the JSON column
-    schema = df.schema[column_name].dataType
+    if json_column not in df.columns:
+        raise ValueError(f"Column '{json_column}' not found in the DataFrame.")
 
-    # Base case: if the column is not a struct or array type, return the DataFrame
-    if not isinstance(schema, (StructType, ArrayType)):
-        return df
-
-    # Flatten struct types
-    if isinstance(schema, StructType):
-        expanded = [col(f"{column_name}.{field.name}").alias(f"{column_name}_{field.name}") 
-                    for field in schema.fields]
-        df = df.select("*", *expanded).drop(column_name)
-
-    # Flatten array types
-    elif isinstance(schema, ArrayType):
-        df = df.withColumn(column_name, explode(col(column_name)))
-
-    # Get all columns of the DataFrame
-    columns = df.columns
-
-    # Recursively flatten any nested structures in the expanded columns
-    for column in columns:
-        if column.startswith(f"{column_name}_") or column == column_name:
-            df = flatten_json(df, column)
-
-    return df
-
-def unpack_json_cell(df, json_column='data'):
-    """
-    Unpack a JSON string cell into multiple columns in a PySpark DataFrame.
-    
-    :param df: PySpark DataFrame with a JSON string column
-    :param json_column: Name of the column containing the JSON data (default: 'data')
-    :return: Flattened DataFrame
-    """
-    # Infer the schema from the JSON string
+    # Get a sample JSON string from the specified column
     sample_json = df.select(json_column).first()[0]
-    schema = expr(f"schema_of_json('{sample_json}')")
-    
-    # Parse the JSON string and flatten the structure
-    parsed_df = df.withColumn("parsed", from_json(col(json_column), schema))
-    flattened_df = flatten_json(parsed_df, "parsed")
-    
-    # Drop the original JSON column and the intermediate parsed column
-    flattened_df = flattened_df.drop(json_column, "parsed")
-    
-    return flattened_df
 
-# Example usage:
-# Assuming 'df' is your original DataFrame with a column named 'data' containing the JSON string
-# flattened_df = unpack_json_cell(df)
-# flattened_df.show()
+    # Infer the schema from the sample JSON
+    json_schema = schema_of_json(lit(sample_json))
 
+    # Parse the JSON data using the inferred schema
+    parsed_df = df.withColumn("parsed_json", from_json(col(json_column), json_schema))
 
+    return json_schema, parsed_df
 
-from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, explode, expr, from_json
-from pyspark.sql.types import StructType, ArrayType
-from typing import List
-import json
-
-def _flatten_json(df: DataFrame, column_name: str) -> DataFrame:
+# Helper function to print schema in a more readable format
+def print_schema_tree(schema: Union[StructType, str], level: int = 0):
     """
-    Recursively flatten a nested JSON structure in a PySpark DataFrame.
+    Prints the schema tree in a more readable format.
 
     Args:
-        df (DataFrame): Input PySpark DataFrame.
-        column_name (str): Name of the column containing the JSON structure.
-
-    Returns:
-        DataFrame: Flattened DataFrame with all nested structures expanded.
-    """
-    schema = df.schema[column_name].dataType
-
-    if not isinstance(schema, (StructType, ArrayType)):
-        return df
-
-    if isinstance(schema, StructType):
-        expanded = [
-            col(f"{column_name}.{field.name}").alias(f"{column_name}_{field.name}")
-            for field in schema.fields
-        ]
-        df = df.select("*", *expanded).drop(column_name)
-    elif isinstance(schema, ArrayType):
-        df = df.withColumn(column_name, explode(col(column_name)))
-
-    columns_to_check = [
-        col for col in df.columns
-        if col.startswith(f"{column_name}_") or col == column_name
-    ]
-
-    for column in columns_to_check:
-        df = _flatten_json(df, column)
-
-    return df
-
-def unpack_json_cell(df: DataFrame, json_column: str = 'data') -> DataFrame:
-    """
-    Unpack a JSON string cell into multiple columns in a PySpark DataFrame.
-
-    This function takes a DataFrame with a JSON string column, infers its schema,
-    and flattens the nested structure into separate columns. It handles nested
-    objects and arrays recursively, fully unpacking all levels of the JSON structure.
-
-    Args:
-        df (DataFrame): Input PySpark DataFrame with a JSON string column.
-        json_column (str, optional): Name of the column containing the JSON data. 
-                                     Defaults to 'data'.
-
-    Returns:
-        DataFrame: A new DataFrame with the JSON structure fully flattened into separate columns.
-
-    Raises:
-        ValueError: If the specified JSON column is not found in the DataFrame.
-        json.JSONDecodeError: If the sample JSON is invalid.
+        schema (Union[StructType, str]): The schema to print, either as a StructType or a string representation.
+        level (int): The current indentation level (used for recursive calls).
 
     Example:
-        >>> json_df = spark.createDataFrame([('{"name": "Alice", "details": {"age": 30, "city": "New York"}}',)], ['data'])
-        >>> flattened_df = unpack_json_cell(json_df)
-        >>> flattened_df.show(truncate=False)
-        +-----+----------+---------------+
-        |name |details_age|details_city   |
-        +-----+----------+---------------+
-        |Alice|30        |New York       |
-        +-----+----------+---------------+
+        >>> json_schema, _ = infer_json_schema(df, "json_data")
+        >>> print_schema_tree(json_schema)
     """
-    if json_column not in df.columns:
-        raise ValueError(f"Column '{json_column}' not found in the DataFrame.")
-
-    try:
-        sample_json = df.select(json_column).first()[0]
-        json.loads(sample_json)  # Validate JSON
-        schema = expr(f"schema_of_json('{sample_json}')")
-    except json.JSONDecodeError as e:
-        raise json.JSONDecodeError(f"Invalid JSON in column '{json_column}': {str(e)}", e.doc, e.pos)
+    if isinstance(schema, str):
+        schema = StructType.fromJson(eval(schema))
     
-    parsed_df = df.withColumn("parsed", from_json(col(json_column), schema))
-    flattened_df = _flatten_json(parsed_df, "parsed")
-    
-    return flattened_df.drop(json_column, "parsed")
+    for field in schema.fields:
+        print("  " * level + f"- {field.name} ({field.dataType})")
+        if isinstance(field.dataType, StructType):
+            print_schema_tree(field.dataType, level + 1)
 
-# Example usage:
-# df_flattened = unpack_json_cell(df)
-# df_flattened.show(truncate=False)
+# Example usage
+# json_schema, parsed_df = infer_json_schema(df, "data")
+# print_schema_tree(json_schema)
+# parsed_df.select("id", "data", "parsed_json.*").show(truncate=False)
 
 
-
-
----
-from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, explode, expr, from_json
-from pyspark.sql.types import StructType, ArrayType
-from typing import List
-import json
-
-def _flatten_json(df: DataFrame, column_name: str, parent_prefix: str = "") -> DataFrame:
-    """
-    Recursively flatten a nested JSON structure in a PySpark DataFrame.
-
-    Args:
-        df (DataFrame): Input PySpark DataFrame.
-        column_name (str): Name of the column containing the JSON structure.
-        parent_prefix (str): Prefix for nested column names.
-
-    Returns:
-        DataFrame: Flattened DataFrame with all nested structures expanded.
-    """
-    schema = df.schema[column_name].dataType
-
-    if not isinstance(schema, (StructType, ArrayType)):
-        return df
-
-    prefix = f"{parent_prefix}_{column_name}" if parent_prefix else column_name
-
-    if isinstance(schema, StructType):
-        expanded = [
-            col(f"{column_name}.{field.name}").alias(f"{prefix}_{field.name}")
-            for field in schema.fields
-        ]
-        df = df.select("*", *expanded).drop(column_name)
-    elif isinstance(schema, ArrayType):
-        df = df.withColumn(column_name, explode(col(column_name)))
-
-    for column in df.columns:
-        if column.startswith(f"{prefix}_"):
-            df = _flatten_json(df, column, prefix)
-
-    return df
-
-def unpack_json_cell(df: DataFrame, json_column: str = 'data') -> DataFrame:
-    """
-    Unpack JSON string cells into multiple columns in a PySpark DataFrame.
-
-    This function takes a DataFrame with a JSON string column, infers its schema,
-    and flattens the nested structure into separate columns for all rows. It handles nested
-    objects and arrays recursively, fully unpacking all levels of the JSON structure.
-
-    Args:
-        df (DataFrame): Input PySpark DataFrame with a JSON string column.
-        json_column (str, optional): Name of the column containing the JSON data. 
-                                     Defaults to 'data'.
-
-    Returns:
-        DataFrame: A new DataFrame with the JSON structure fully flattened into separate columns
-                   for all rows.
-
-    Raises:
-        ValueError: If the specified JSON column is not found in the DataFrame.
-
-    Example:
-        >>> json_df = spark.createDataFrame([
-        ...     ('{"name": "Alice", "details": {"age": 30, "city": "New York"}}',),
-        ...     ('{"name": "Bob", "details": {"age": 25, "city": "San Francisco"}}',)
-        ... ], ['data'])
-        >>> flattened_df = unpack_json_cell(json_df)
-        >>> flattened_df.show(truncate=False)
-        +-----+------------+-------------------+
-        |name |details_age |details_city       |
-        +-----+------------+-------------------+
-        |Alice|30          |New York           |
-        |Bob  |25          |San Francisco      |
-        +-----+------------+-------------------+
-    """
-    if json_column not in df.columns:
-        raise ValueError(f"Column '{json_column}' not found in the DataFrame.")
-
-    # Infer schema from the entire column, not just the first row
-    schema = df.select(json_column).schema[0].dataType
-    if isinstance(schema, StringType):
-        # If the column is a string, we need to infer the JSON schema
-        schema = df.select(schema_of_json(col(json_column))).first()[0]
-    
-    parsed_df = df.withColumn("_temp_parsed", from_json(col(json_column), schema))
-    flattened_df = _flatten_json(parsed_df, "_temp_parsed")
-    
-    return flattened_df.drop(json_column, "_temp_parsed")
-
-# Example usage:
-# df_flattened = unpack_json_cell(df)
-# df_flattened.show(truncate=False)
 ```
