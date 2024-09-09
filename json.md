@@ -70,7 +70,7 @@ df_result = df_exploded.drop("json_column", "parsed_json", "exploded")
 # ----------
 
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
-from pyspark.sql.functions import from_json, col, explode, expr
+from pyspark.sql.functions import from_json, col, explode
 
 def infer_schema_from_json(json_data):
     def infer_type(value):
@@ -112,38 +112,18 @@ def infer_schema_from_json(json_data):
     
     return StructType(fields)
 
-def create_nested_columns(df, prefix, struct):
-    for field in struct.fields:
-        col_name = f"{prefix}.{field.name}" if prefix else field.name
-        if isinstance(field.dataType, StructType):
-            df = create_nested_columns(df, col_name, field.dataType)
-        elif isinstance(field.dataType, ArrayType):
-            if isinstance(field.dataType.elementType, StructType):
-                # Fixed syntax error here
-                df = df.withColumn(
-                    col_name,
-                    expr(f"transform(exploded.{col_name}, x -> struct({','.join([f'{f.name}, x.{f.name}' for f in field.dataType.elementType.fields])}))")
-                )
-            else:
-                df = df.withColumn(col_name, col(f"exploded.{col_name}"))
-        else:
-            df = df.withColumn(col_name, col(f"exploded.{col_name}"))
-    return df
-
 # Assume we have the sample_json and df defined
 inferred_schema = infer_schema_from_json(sample_json[0])
 
 # Parse the JSON column
-df_parsed = df.withColumn("parsed_json", from_json(col("data"), ArrayType(inferred_schema)))
-
-# Explode the array and create individual columns
-df_exploded = df_parsed.select("*", explode("parsed_json").alias("exploded"))
+df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
 
 # Create individual columns for each field in the JSON
-df_result = create_nested_columns(df_exploded, "", inferred_schema)
+for field in inferred_schema.fields:
+    df_parsed = df_parsed.withColumn(field.name, col(f"parsed_json.{field.name}"))
 
-# Drop intermediate columns
-df_result = df_result.drop("data", "parsed_json", "exploded")
+# Drop the original and intermediate columns
+df_result = df_parsed.drop("data", "parsed_json")
 
 # For debugging purposes
 df_result.printSchema()
