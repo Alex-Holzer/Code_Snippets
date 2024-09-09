@@ -68,9 +68,15 @@ df_result = df_exploded.drop("json_column", "parsed_json", "exploded")
 
 
 # ----------
+
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
+from pyspark.sql.functions import from_json, col, explode, expr
+
 def infer_schema_from_json(json_data):
     def infer_type(value):
-        if isinstance(value, bool):
+        if value is None:
+            return StringType()
+        elif isinstance(value, bool):
             return BooleanType()
         elif isinstance(value, int):
             if value > 2147483647 or value < -2147483648:
@@ -82,7 +88,7 @@ def infer_schema_from_json(json_data):
             if value:
                 return ArrayType(infer_type(value[0]))
             else:
-                return ArrayType(StringType())  # Default to string for empty arrays
+                return ArrayType(StringType())
         elif isinstance(value, dict):
             return infer_schema_from_json(value)
         else:
@@ -94,7 +100,6 @@ def infer_schema_from_json(json_data):
             fields.append(StructField(key, infer_schema_from_json(value), True))
         elif isinstance(value, list):
             if value and isinstance(value[0], dict):
-                # Handle nested array of objects
                 element_type = infer_schema_from_json(value[0])
                 fields.append(StructField(key, ArrayType(element_type), True))
             elif value:
@@ -107,8 +112,34 @@ def infer_schema_from_json(json_data):
     
     return StructType(fields)
 
+# Assume we have the sample_json and df defined
+inferred_schema = infer_schema_from_json(sample_json[0])
 
+# Parse the JSON column
+df_parsed = df.withColumn("parsed_json", from_json(col("data"), ArrayType(inferred_schema)))
 
+# Explode the array and create individual columns
+df_exploded = df_parsed.select("*", explode("parsed_json").alias("exploded"))
 
+# Function to recursively create columns from nested structures
+def create_nested_columns(df, prefix, struct):
+    for field in struct.fields:
+        col_name = f"{prefix}.{field.name}" if prefix else field.name
+        if isinstance(field.dataType, StructType):
+            df = create_nested_columns(df, col_name, field.dataType)
+        elif isinstance(field.dataType, ArrayType):
+            if isinstance(field.dataType.elementType, StructType):
+                df = df.withColumn(col_name, expr(f"transform(exploded.{col_name}, x -> struct({','.join([f'{f.name}, x.{f.name}' for f in field.dataType.elementType.fields])}))")
+            else:
+                df = df.withColumn(col_name, col(f"exploded.{col_name}"))
+        else:
+            df = df.withColumn(col_name, col(f"exploded.{col_name}"))
+    return df
+
+# Create individual columns for each field in the JSON
+df_result = create_nested_columns(df_exploded, "", inferred_schema)
+
+# Drop intermediate columns
+df_result = df_result.drop("data", "parsed_json", "exploded")
 
 ```
