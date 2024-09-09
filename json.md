@@ -1,14 +1,10 @@
 ```python
 
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
-import json
-
-dfrom pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
-import json
+from pyspark.sql.functions import col, from_json, to_json, schema_of_json
 
-def infer_schema_from_json(json_data):
+def infer_schema_from_json(json_str):
     def infer_type(value):
         if isinstance(value, bool):
             return BooleanType()
@@ -22,16 +18,17 @@ def infer_schema_from_json(json_data):
             if value:
                 return ArrayType(infer_type(value[0]))
             else:
-                return ArrayType(StringType())  # Default to string for empty arrays
+                return ArrayType(StringType())
         elif isinstance(value, dict):
-            return infer_schema_from_json(value)
+            return infer_schema_from_json(json.dumps(value))
         else:
             return StringType()
 
+    parsed = json.loads(json_str)
     fields = []
-    for key, value in json_data.items():
+    for key, value in parsed.items():
         if isinstance(value, dict):
-            fields.append(StructField(key, infer_schema_from_json(value), True))
+            fields.append(StructField(key, infer_schema_from_json(json.dumps(value)), True))
         elif isinstance(value, list):
             if value:
                 element_type = infer_type(value[0])
@@ -43,48 +40,36 @@ def infer_schema_from_json(json_data):
     
     return StructType(fields)
 
-# Create a SparkSession
-spark = SparkSession.builder.appName("ImprovedSchemaInference").getOrCreate()
+# Assume 'spark' is your SparkSession and 'df' is your DataFrame with a 'json_column'
 
-# Sample JSON data with a large integer
-sample_json = [
-    {
-        "id": "12345",
-        "name": "John Doe",
-        "age": 30,
-        "large_number": 9223372036854775807,  # Maximum value for LongType
-        "salary": 50000.50,
-        "is_employee": True,
-        "hobbies": ["reading", "swimming"],
-        "address": {
-            "street": "123 Main St",
-            "city": "New York",
-            "country": "USA"
-        },
-        "scores": [
-            {"subject": "math", "score": 95},
-            {"subject": "english", "score": 88}
-        ]
-    }
-]
+# Get a sample of the JSON data from the column
+sample_json = df.select("json_column").limit(1).collect()[0][0]
 
-# Infer the schema from the sample data
-inferred_schema = infer_schema_from_json(sample_json[0])
+# Infer the schema from the sample
+inferred_schema = infer_schema_from_json(sample_json)
 
 # Print the inferred schema
-print(inferred_schema)
+print("Inferred Schema:")
+inferred_schema.printTreeString()
 
-# Create a DataFrame using the inferred schema
-df = spark.createDataFrame(sample_json, schema=inferred_schema)
+# Apply the inferred schema to parse the JSON column
+df_parsed = df.withColumn("parsed_json", from_json(col("json_column"), inferred_schema))
 
-# Show the DataFrame to verify the schema
-df.printSchema()
-df.show(truncate=False)
+# Select all fields from the parsed JSON
+df_result = df_parsed.select("parsed_json.*")
 
-# Example of using the inferred schema to parse a JSON column
-from pyspark.sql.functions import from_json, col
+# Show the result
+print("\nParsed Data:")
+df_result.show(truncate=False)
 
-# Assuming you have a DataFrame 'df_with_json' with a column 'json_column'
-# df_parsed = df_with_json.withColumn("parsed_json", from_json(col("json_column"), inferred_schema))
-# df_parsed.select("parsed_json.*").show(truncate=False)
+# If you want to work with specific fields:
+# df_result = df_parsed.select(
+#     col("parsed_json.id"),
+#     col("parsed_json.name"),
+#     col("parsed_json.age"),
+#     col("parsed_json.address.city").alias("city")
+# )
+# df_result.show(truncate=False)
+
+
 ```
