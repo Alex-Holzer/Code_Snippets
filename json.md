@@ -67,5 +67,48 @@ for field in inferred_schema.fields:
 df_result = df_exploded.drop("json_column", "parsed_json", "exploded")
 
 
+# ----------
+def infer_schema_from_json(json_data):
+    def infer_type(value):
+        if isinstance(value, bool):
+            return BooleanType()
+        elif isinstance(value, int):
+            if value > 2147483647 or value < -2147483648:
+                return LongType()
+            return IntegerType()
+        elif isinstance(value, float):
+            return FloatType()
+        elif isinstance(value, list):
+            if value:
+                return ArrayType(infer_type(value[0]))
+            else:
+                return ArrayType(StringType())  # Default to string for empty arrays
+        elif isinstance(value, dict):
+            return infer_schema_from_json(value)
+        else:
+            return StringType()
+
+    fields = []
+    for key, value in json_data.items():
+        if isinstance(value, dict):
+            fields.append(StructField(key, infer_schema_from_json(value), True))
+        elif isinstance(value, list):
+            if value and isinstance(value[0], dict):
+                # Handle nested array of objects
+                element_type = infer_schema_from_json(value[0])
+                fields.append(StructField(key, ArrayType(element_type), True))
+            elif value:
+                element_type = infer_type(value[0])
+                fields.append(StructField(key, ArrayType(element_type), True))
+            else:
+                fields.append(StructField(key, ArrayType(StringType()), True))
+        else:
+            fields.append(StructField(key, infer_type(value), True))
+    
+    return StructType(fields)
+
+
+
+
 
 ```
