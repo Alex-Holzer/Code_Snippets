@@ -79,7 +79,7 @@ from pyspark.sql.types import (
     BooleanType,
     ArrayType,
 )
-from pyspark.sql.functions import from_json, col, explode
+from pyspark.sql.functions import from_json, col, explode, to_json
 
 def infer_schema_from_json(json_data):
     def infer_type(value):
@@ -137,7 +137,11 @@ for field in inferred_schema.fields:
         df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
     elif isinstance(field.dataType, ArrayType):
         # For arrays, keep them as a single column
-        df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+        # Convert complex nested structures to JSON strings for better visibility
+        if isinstance(field.dataType.elementType, (StructType, ArrayType)):
+            df_exploded = df_exploded.withColumn(field.name, to_json(col(f"exploded.{field.name}")))
+        else:
+            df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
     else:
         # For simple types, create a column directly
         df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
@@ -154,5 +158,11 @@ df_result.show(truncate=False)
 
 print("\nColumns in df_result:")
 print(df_result.columns)
+
+# If you want to see the content of a specific column (e.g., 'lvks')
+if 'lvks' in df_result.columns:
+    print("\nSample data from 'lvks' column:")
+    df_result.select("lvks").show(truncate=False)
+
 
 ```
