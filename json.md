@@ -112,6 +112,24 @@ def infer_schema_from_json(json_data):
     
     return StructType(fields)
 
+def create_nested_columns(df, prefix, struct):
+    for field in struct.fields:
+        col_name = f"{prefix}.{field.name}" if prefix else field.name
+        if isinstance(field.dataType, StructType):
+            df = create_nested_columns(df, col_name, field.dataType)
+        elif isinstance(field.dataType, ArrayType):
+            if isinstance(field.dataType.elementType, StructType):
+                # Fixed syntax error here
+                df = df.withColumn(
+                    col_name,
+                    expr(f"transform(exploded.{col_name}, x -> struct({','.join([f'{f.name}, x.{f.name}' for f in field.dataType.elementType.fields])}))")
+                )
+            else:
+                df = df.withColumn(col_name, col(f"exploded.{col_name}"))
+        else:
+            df = df.withColumn(col_name, col(f"exploded.{col_name}"))
+    return df
+
 # Assume we have the sample_json and df defined
 inferred_schema = infer_schema_from_json(sample_json[0])
 
@@ -121,25 +139,14 @@ df_parsed = df.withColumn("parsed_json", from_json(col("data"), ArrayType(inferr
 # Explode the array and create individual columns
 df_exploded = df_parsed.select("*", explode("parsed_json").alias("exploded"))
 
-# Function to recursively create columns from nested structures
-def create_nested_columns(df, prefix, struct):
-    for field in struct.fields:
-        col_name = f"{prefix}.{field.name}" if prefix else field.name
-        if isinstance(field.dataType, StructType):
-            df = create_nested_columns(df, col_name, field.dataType)
-        elif isinstance(field.dataType, ArrayType):
-            if isinstance(field.dataType.elementType, StructType):
-                df = df.withColumn(col_name, expr(f"transform(exploded.{col_name}, x -> struct({','.join([f'{f.name}, x.{f.name}' for f in field.dataType.elementType.fields])}))")
-            else:
-                df = df.withColumn(col_name, col(f"exploded.{col_name}"))
-        else:
-            df = df.withColumn(col_name, col(f"exploded.{col_name}"))
-    return df
-
 # Create individual columns for each field in the JSON
 df_result = create_nested_columns(df_exploded, "", inferred_schema)
 
 # Drop intermediate columns
 df_result = df_result.drop("data", "parsed_json", "exploded")
+
+# For debugging purposes
+df_result.printSchema()
+df_result.select("lvks").show(truncate=False)
 
 ```
