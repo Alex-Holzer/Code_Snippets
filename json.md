@@ -2,7 +2,7 @@
 
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
-from pyspark.sql.functions import from_json, col, explode, posexplode
+from pyspark.sql.functions import from_json, col, explode, expr, to_json
 import json
 
 def infer_schema_from_json(json_data):
@@ -30,7 +30,9 @@ def infer_schema_from_json(json_data):
         if isinstance(value, dict):
             fields.append(StructField(key, infer_schema_from_json(value), True))
         elif isinstance(value, list):
-            if value:
+            if value and isinstance(value[0], dict):
+                fields.append(StructField(key, ArrayType(infer_schema_from_json(value[0])), True))
+            elif value:
                 element_type = infer_type(value[0])
                 fields.append(StructField(key, ArrayType(element_type), True))
             else:
@@ -41,9 +43,9 @@ def infer_schema_from_json(json_data):
     return StructType(fields)
 
 # Create a SparkSession
-spark = SparkSession.builder.appName("ParseJSONListColumn").getOrCreate()
+spark = SparkSession.builder.appName("ParseJSONListWithNestedArrays").getOrCreate()
 
-# Sample JSON data (list of dictionaries)
+# Sample JSON data (list of dictionaries with nested array of objects)
 sample_json = [
     {
         "id": "12345",
@@ -53,7 +55,11 @@ sample_json = [
             "street": "123 Main St",
             "city": "New York"
         },
-        "hobbies": ["reading", "swimming"]
+        "hobbies": ["reading", "swimming"],
+        "scores": [
+            {"subject": "math", "score": 95},
+            {"subject": "english", "score": 88}
+        ]
     },
     {
         "id": "67890",
@@ -63,7 +69,11 @@ sample_json = [
             "street": "456 Elm St",
             "city": "Los Angeles"
         },
-        "hobbies": ["painting", "yoga"]
+        "hobbies": ["painting", "yoga"],
+        "scores": [
+            {"subject": "history", "score": 92},
+            {"subject": "science", "score": 94}
+        ]
     }
 ]
 
@@ -72,14 +82,14 @@ inferred_schema = infer_schema_from_json(sample_json[0])
 
 # Print the inferred schema
 print("Inferred Schema:")
-print(inferred_schema)
+inferred_schema.printTreeString()
 
 # Create a DataFrame with a JSON column (simulating your existing DataFrame)
 df_with_json = spark.createDataFrame([
     (1, json.dumps(sample_json)),
     (2, json.dumps([
-        {"id": "11111", "name": "Alice Johnson", "age": 35, "address": {"street": "789 Oak St", "city": "Chicago"}, "hobbies": ["traveling", "cooking"]},
-        {"id": "22222", "name": "Bob Williams", "age": 40, "address": {"street": "101 Pine St", "city": "San Francisco"}, "hobbies": ["photography", "hiking"]}
+        {"id": "11111", "name": "Alice Johnson", "age": 35, "address": {"street": "789 Oak St", "city": "Chicago"}, "hobbies": ["traveling", "cooking"], "scores": [{"subject": "physics", "score": 91}, {"subject": "chemistry", "score": 89}]},
+        {"id": "22222", "name": "Bob Williams", "age": 40, "address": {"street": "101 Pine St", "city": "San Francisco"}, "hobbies": ["photography", "hiking"], "scores": [{"subject": "biology", "score": 93}, {"subject": "geography", "score": 90}]}
     ]))
 ], ["row_id", "json_column"])
 
@@ -98,8 +108,18 @@ for field in inferred_schema.fields:
         #     df_exploded = df_exploded.withColumn(f"{field.name}_{nested_field.name}", 
         #                                          col(f"exploded.{field.name}.{nested_field.name}"))
     elif isinstance(field.dataType, ArrayType):
-        # For arrays, keep them as a single column
-        df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+        if isinstance(field.dataType.elementType, StructType):
+            # For arrays of objects, keep as JSON string
+            df_exploded = df_exploded.withColumn(field.name, to_json(col(f"exploded.{field.name}")))
+            
+            # If you want to extract specific fields from the array of objects:
+            # df_exploded = df_exploded.withColumn(
+            #     f"{field.name}_extracted",
+            #     expr(f"transform({field.name}, x -> struct(x.subject as subject, x.score as score))")
+            # )
+        else:
+            # For simple arrays, keep as is
+            df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
     else:
         # For simple types, create a column directly
         df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
