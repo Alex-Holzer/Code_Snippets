@@ -2,74 +2,80 @@
 
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
-from pyspark.sql.functions import col, from_json, to_json, schema_of_json
+from pyspark.sql.functions import from_json, col, to_json
+import json
 
-def infer_schema_from_json(json_str):
-    def infer_type(value):
-        if isinstance(value, bool):
-            return BooleanType()
-        elif isinstance(value, int):
-            if value > 2147483647 or value < -2147483648:
-                return LongType()
-            return IntegerType()
-        elif isinstance(value, float):
-            return FloatType()
-        elif isinstance(value, list):
-            if value:
-                return ArrayType(infer_type(value[0]))
-            else:
-                return ArrayType(StringType())
-        elif isinstance(value, dict):
-            return infer_schema_from_json(json.dumps(value))
-        else:
-            return StringType()
+def infer_schema_from_json(json_data):
+    # ... [Keep the existing infer_schema_from_json function as is] ...
 
-    parsed = json.loads(json_str)
-    fields = []
-    for key, value in parsed.items():
-        if isinstance(value, dict):
-            fields.append(StructField(key, infer_schema_from_json(json.dumps(value)), True))
-        elif isinstance(value, list):
-            if value:
-                element_type = infer_type(value[0])
-                fields.append(StructField(key, ArrayType(element_type), True))
-            else:
-                fields.append(StructField(key, ArrayType(StringType()), True))
-        else:
-            fields.append(StructField(key, infer_type(value), True))
-    
-    return StructType(fields)
+# Create a SparkSession
+spark = SparkSession.builder.appName("JSONToMultipleColumns").getOrCreate()
 
-# Assume 'spark' is your SparkSession and 'df' is your DataFrame with a 'json_column'
+# Sample JSON data (used for schema inference)
+sample_json = [
+    {
+        "id": "12345",
+        "name": "John Doe",
+        "age": 30,
+        "large_number": 9223372036854775807,
+        "salary": 50000.50,
+        "is_employee": True,
+        "hobbies": ["reading", "swimming"],
+        "address": {
+            "street": "123 Main St",
+            "city": "New York",
+            "country": "USA"
+        },
+        "scores": [
+            {"subject": "math", "score": 95},
+            {"subject": "english", "score": 88}
+        ]
+    }
+]
 
-# Get a sample of the JSON data from the column
-sample_json = df.select("json_column").limit(1).collect()[0][0]
-
-# Infer the schema from the sample
-inferred_schema = infer_schema_from_json(sample_json)
+# Infer the schema from the sample data
+inferred_schema = infer_schema_from_json(sample_json[0])
 
 # Print the inferred schema
 print("Inferred Schema:")
-inferred_schema.printTreeString()
+print(inferred_schema)
 
-# Apply the inferred schema to parse the JSON column
-df_parsed = df.withColumn("parsed_json", from_json(col("json_column"), inferred_schema))
+# Create a new DataFrame with a JSON column (simulating your existing DataFrame)
+df_with_json = spark.createDataFrame([
+    (1, '{"name": "Alice", "age": 25, "address": {"city": "London", "country": "UK"}, "hobbies": ["dancing", "painting"]}'),
+    (2, '{"name": "Bob", "age": 30, "address": {"city": "Paris", "country": "France"}, "hobbies": ["cooking", "traveling"]}')
+], ["id", "json_column"])
 
-# Select all fields from the parsed JSON
-df_result = df_parsed.select("parsed_json.*")
+# Parse the JSON column
+df_parsed = df_with_json.withColumn("parsed_json", from_json(col("json_column"), inferred_schema))
+
+# Create individual columns for each field in the JSON
+for field in inferred_schema.fields:
+    if isinstance(field.dataType, StructType):
+        # For nested objects, create a column with the struct
+        df_parsed = df_parsed.withColumn(field.name, col(f"parsed_json.{field.name}"))
+        
+        # If you want to flatten the nested object, uncomment the following lines:
+        # for nested_field in field.dataType.fields:
+        #     df_parsed = df_parsed.withColumn(f"{field.name}_{nested_field.name}", 
+        #                                      col(f"parsed_json.{field.name}.{nested_field.name}"))
+    elif isinstance(field.dataType, ArrayType):
+        # For arrays, keep them as a single column
+        df_parsed = df_parsed.withColumn(field.name, col(f"parsed_json.{field.name}"))
+    else:
+        # For simple types, create a column directly
+        df_parsed = df_parsed.withColumn(field.name, col(f"parsed_json.{field.name}"))
+
+# Drop the original JSON column and the intermediate parsed_json column
+df_result = df_parsed.drop("json_column", "parsed_json")
 
 # Show the result
-print("\nParsed Data:")
+print("\nParsed Data with Individual Columns:")
 df_result.show(truncate=False)
 
-# If you want to work with specific fields:
-# df_result = df_parsed.select(
-#     col("parsed_json.id"),
-#     col("parsed_json.name"),
-#     col("parsed_json.age"),
-#     col("parsed_json.address.city").alias("city")
-# )
-# df_result.show(truncate=False)
+# If you want to see the schema of the resulting DataFrame
+print("\nResulting DataFrame Schema:")
+df_result.printSchema()
 
 
 ```
