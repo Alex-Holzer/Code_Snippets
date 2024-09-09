@@ -69,8 +69,9 @@ df_result = df_exploded.drop("json_column", "parsed_json", "exploded")
 
 # ----------
 
-from pyspark.sql.functions import schema_of_json, from_json
+from pyspark.sql.functions import col, from_json, to_json
 from pyspark.sql.types import StructType, ArrayType, StringType
+import json
 
 def infer_schema_from_column(df, column_name, sample_size=1000):
     """
@@ -81,24 +82,20 @@ def infer_schema_from_column(df, column_name, sample_size=1000):
     :param sample_size: Number of rows to sample for schema inference
     :return: Inferred schema as StructType
     """
-    # Sample the DataFrame
+    # Sample the DataFrame and collect JSON strings
     df_sample = df.select(column_name).limit(sample_size)
-    
-    # Collect the sampled JSON strings
     json_strings = [row[column_name] for row in df_sample.collect() if row[column_name] is not None]
     
     if not json_strings:
         raise ValueError(f"No non-null JSON data found in column '{column_name}'")
     
-    # Infer schema from each JSON string
-    schemas = [schema_of_json(json_str) for json_str in json_strings]
+    # Combine all JSON objects into a single array
+    combined_json = "[" + ",".join(json_strings) + "]"
     
-    # Merge the schemas
-    merged_schema = schemas[0]
-    for schema in schemas[1:]:
-        merged_schema = merge_schemas(merged_schema, schema)
+    # Create a temporary view of the combined JSON
+    temp_df = df.sparkSession.read.json(df.sparkSession.sparkContext.parallelize([combined_json]))
     
-    return merged_schema
+    return temp_df.schema
 
 def merge_schemas(schema1, schema2):
     """
@@ -121,7 +118,8 @@ def merge_schemas(schema1, schema2):
     for key in all_keys:
         if key in fields1 and key in fields2:
             # If the field is in both schemas, merge them
-            merged_fields.append(StructType([merge_schemas(fields1[key], fields2[key])]))
+            merged_field = StructField(key, merge_schemas(fields1[key].dataType, fields2[key].dataType), True)
+            merged_fields.append(merged_field)
         elif key in fields1:
             merged_fields.append(fields1[key])
         else:
@@ -135,6 +133,5 @@ def merge_schemas(schema1, schema2):
 
 # To use the inferred schema:
 # df_parsed = df.withColumn("parsed", from_json(col("json_column"), inferred_schema))
-
 
 ```
