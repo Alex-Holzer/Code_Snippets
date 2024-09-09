@@ -69,50 +69,72 @@ df_result = df_exploded.drop("json_column", "parsed_json", "exploded")
 
 # ----------
 
-from pyspark.sql.functions import col, from_json, explode
+from pyspark.sql.functions import schema_of_json, from_json
 from pyspark.sql.types import StructType, ArrayType, StringType
 
-def unpack_json_column(df, json_column, schema=None):
+def infer_schema_from_column(df, column_name, sample_size=1000):
     """
-    Unpacks a JSON column in a PySpark DataFrame.
+    Infers the schema from a DataFrame column containing JSON data.
     
     :param df: Input DataFrame
-    :param json_column: Name of the column containing JSON data
-    :param schema: Optional schema for the JSON data. If None, it will be inferred.
-    :return: DataFrame with unpacked JSON columns
+    :param column_name: Name of the column containing JSON data
+    :param sample_size: Number of rows to sample for schema inference
+    :return: Inferred schema as StructType
     """
-    # If schema is not provided, infer it
-    if schema is None:
-        schema = df.select(json_column).schema[0].dataType
+    # Sample the DataFrame
+    df_sample = df.select(column_name).limit(sample_size)
     
-    # Check if the column contains an array of JSON objects
-    if isinstance(schema, ArrayType):
-        df = df.withColumn(json_column, explode(col(json_column)))
-        schema = schema.elementType
+    # Collect the sampled JSON strings
+    json_strings = [row[column_name] for row in df_sample.collect() if row[column_name] is not None]
     
-    # Parse the JSON column
-    parsed = df.withColumn("parsed", from_json(col(json_column), schema))
+    if not json_strings:
+        raise ValueError(f"No non-null JSON data found in column '{column_name}'")
     
-    # Flatten the structure
-    for field in schema:
-        if isinstance(field.dataType, StructType):
-            for nested_field in field.dataType:
-                parsed = parsed.withColumn(f"{field.name}_{nested_field.name}", 
-                                           col(f"parsed.{field.name}.{nested_field.name}"))
-        elif isinstance(field.dataType, ArrayType):
-            parsed = parsed.withColumn(field.name, col(f"parsed.{field.name}"))
+    # Infer schema from each JSON string
+    schemas = [schema_of_json(json_str) for json_str in json_strings]
+    
+    # Merge the schemas
+    merged_schema = schemas[0]
+    for schema in schemas[1:]:
+        merged_schema = merge_schemas(merged_schema, schema)
+    
+    return merged_schema
+
+def merge_schemas(schema1, schema2):
+    """
+    Merges two schemas, combining fields and handling conflicts.
+    
+    :param schema1: First schema
+    :param schema2: Second schema
+    :return: Merged schema
+    """
+    if not isinstance(schema1, StructType) or not isinstance(schema2, StructType):
+        # If either schema is not a StructType, return the more complex one
+        return schema1 if isinstance(schema1, StructType) else schema2
+    
+    fields1 = {field.name: field for field in schema1.fields}
+    fields2 = {field.name: field for field in schema2.fields}
+    
+    merged_fields = []
+    all_keys = set(fields1.keys()) | set(fields2.keys())
+    
+    for key in all_keys:
+        if key in fields1 and key in fields2:
+            # If the field is in both schemas, merge them
+            merged_fields.append(StructType([merge_schemas(fields1[key], fields2[key])]))
+        elif key in fields1:
+            merged_fields.append(fields1[key])
         else:
-            parsed = parsed.withColumn(field.name, col(f"parsed.{field.name}"))
+            merged_fields.append(fields2[key])
     
-    # Drop the original JSON column and the intermediate parsed column
-    return parsed.drop(json_column, "parsed")
+    return StructType(merged_fields)
 
 # Example usage:
 # Assuming 'df' is your DataFrame and 'json_column' is the name of your JSON column
-# result_df = unpack_json_column(df, 'json_column')
+# inferred_schema = infer_schema_from_column(df, 'json_column')
 
-# To see the result:
-# result_df.printSchema()
-# result_df.show(truncate=False)
+# To use the inferred schema:
+# df_parsed = df.withColumn("parsed", from_json(col("json_column"), inferred_schema))
+
 
 ```
