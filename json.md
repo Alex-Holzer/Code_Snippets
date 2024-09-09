@@ -69,8 +69,17 @@ df_result = df_exploded.drop("json_column", "parsed_json", "exploded")
 
 # ----------
 
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
-from pyspark.sql.functions import from_json, col, explode
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    LongType,
+    FloatType,
+    BooleanType,
+    ArrayType,
+)
+from pyspark.sql.functions import from_json, col, explode, expr
 
 def infer_schema_from_json(json_data):
     def infer_type(value):
@@ -109,8 +118,21 @@ def infer_schema_from_json(json_data):
                 fields.append(StructField(key, ArrayType(StringType()), True))
         else:
             fields.append(StructField(key, infer_type(value), True))
-    
+
     return StructType(fields)
+
+def flatten_schema(schema, prefix=""):
+    fields = []
+    for field in schema.fields:
+        name = prefix + field.name
+        if isinstance(field.dataType, StructType):
+            fields.extend(flatten_schema(field.dataType, name + "_"))
+        elif isinstance(field.dataType, ArrayType) and isinstance(field.dataType.elementType, StructType):
+            fields.append((name, field.dataType))
+            fields.extend(flatten_schema(field.dataType.elementType, name + "_"))
+        else:
+            fields.append((name, field.dataType))
+    return fields
 
 # Assume we have the sample_json and df defined
 inferred_schema = infer_schema_from_json(sample_json[0])
@@ -118,15 +140,29 @@ inferred_schema = infer_schema_from_json(sample_json[0])
 # Parse the JSON column
 df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
 
+# Flatten the schema
+flat_schema = flatten_schema(inferred_schema)
+
 # Create individual columns for each field in the JSON
-for field in inferred_schema.fields:
-    df_parsed = df_parsed.withColumn(field.name, col(f"parsed_json.{field.name}"))
+for name, data_type in flat_schema:
+    if isinstance(data_type, ArrayType) and isinstance(data_type.elementType, StructType):
+        # For arrays of structs, explode the array and create columns for each field
+        df_parsed = df_parsed.withColumn(f"{name}_exploded", explode(col(f"parsed_json.{name}")))
+        for subfield in data_type.elementType.fields:
+            df_parsed = df_parsed.withColumn(f"{name}_{subfield.name}", col(f"{name}_exploded.{subfield.name}"))
+        df_parsed = df_parsed.drop(f"{name}_exploded")
+    elif isinstance(data_type, ArrayType):
+        # For simple arrays, keep them as a single column
+        df_parsed = df_parsed.withColumn(name, col(f"parsed_json.{name}"))
+    else:
+        # For simple types, create a column directly
+        df_parsed = df_parsed.withColumn(name, col(f"parsed_json.{name}"))
 
 # Drop the original and intermediate columns
 df_result = df_parsed.drop("data", "parsed_json")
 
 # For debugging purposes
 df_result.printSchema()
-df_result.select("lvks").show(truncate=False)
+df_result.show(truncate=False)
 
 ```
