@@ -4,14 +4,20 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
 import json
 
+dfrom pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
+import json
+
 def infer_schema_from_json(json_data):
     def infer_type(value):
         if isinstance(value, bool):
-            return StringType()  # Treat booleans as strings to avoid type conflicts
+            return BooleanType()
         elif isinstance(value, int):
+            if value > 2147483647 or value < -2147483648:
+                return LongType()
             return IntegerType()
         elif isinstance(value, float):
-            return StringType()  # Treat floats as strings for precise representation
+            return FloatType()
         elif isinstance(value, list):
             if value:
                 return ArrayType(infer_type(value[0]))
@@ -40,12 +46,13 @@ def infer_schema_from_json(json_data):
 # Create a SparkSession
 spark = SparkSession.builder.appName("ImprovedSchemaInference").getOrCreate()
 
-# Sample JSON data (you can replace this with your actual sample data)
+# Sample JSON data with a large integer
 sample_json = [
     {
         "id": "12345",
         "name": "John Doe",
         "age": 30,
+        "large_number": 9223372036854775807,  # Maximum value for LongType
         "salary": 50000.50,
         "is_employee": True,
         "hobbies": ["reading", "swimming"],
@@ -57,23 +64,6 @@ sample_json = [
         "scores": [
             {"subject": "math", "score": 95},
             {"subject": "english", "score": 88}
-        ]
-    },
-    {
-        "id": "67890",
-        "name": "Jane Smith",
-        "age": 28,
-        "salary": 55000.75,
-        "is_employee": False,
-        "hobbies": ["painting", "yoga"],
-        "address": {
-            "street": "456 Elm St",
-            "city": "Los Angeles",
-            "country": "USA"
-        },
-        "scores": [
-            {"subject": "math", "score": 92},
-            {"subject": "english", "score": 96}
         ]
     }
 ]
@@ -97,6 +87,4 @@ from pyspark.sql.functions import from_json, col
 # Assuming you have a DataFrame 'df_with_json' with a column 'json_column'
 # df_parsed = df_with_json.withColumn("parsed_json", from_json(col("json_column"), inferred_schema))
 # df_parsed.select("parsed_json.*").show(truncate=False)
-
-
 ```
