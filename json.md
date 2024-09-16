@@ -327,7 +327,7 @@ def infer_schema_from_json(json_data):
 def merge_schemas(schema1, schema2):
     """
     Merges two schemas, handling nested structures and arrays.
-    
+
     :param schema1: First schema
     :param schema2: Second schema
     :return: Merged schema
@@ -337,23 +337,34 @@ def merge_schemas(schema1, schema2):
     if schema2 is None:
         return schema1
 
-    fields1 = {field.name: field for field in schema1.fields}
-    fields2 = {field.name: field for field in schema2.fields}
-    
-    merged_fields = []
-    all_keys = set(fields1.keys()) | set(fields2.keys())
-    
-    for key in all_keys:
-        if key in fields1 and key in fields2:
-            # Merge fields that appear in both schemas
-            merged_field = StructField(key, merge_schemas(fields1[key].dataType, fields2[key].dataType), True)
-            merged_fields.append(merged_field)
-        elif key in fields1:
-            merged_fields.append(fields1[key])
-        else:
-            merged_fields.append(fields2[key])
-    
-    return StructType(merged_fields)
+    if isinstance(schema1, ArrayType) and isinstance(schema2, ArrayType):
+        # If both are arrays, merge their element types
+        element_type = merge_schemas(schema1.elementType, schema2.elementType)
+        return ArrayType(element_type)
+
+    if isinstance(schema1, StructType) and isinstance(schema2, StructType):
+        fields1 = {field.name: field for field in schema1.fields}
+        fields2 = {field.name: field for field in schema2.fields}
+
+        merged_fields = []
+        all_keys = set(fields1.keys()) | set(fields2.keys())
+
+        for key in all_keys:
+            if key in fields1 and key in fields2:
+                # Merge fields that appear in both schemas
+                merged_field = StructField(
+                    key, merge_schemas(fields1[key].dataType, fields2[key].dataType), True
+                )
+                merged_fields.append(merged_field)
+            elif key in fields1:
+                merged_fields.append(fields1[key])
+            else:
+                merged_fields.append(fields2[key])
+
+        return StructType(merged_fields)
+
+    # If types are not the same or are primitive types, prioritize schema1
+    return schema1 if isinstance(schema1, DataType) else schema2
 
 # Parse the JSON column and handle nested structures
 inferred_schema = infer_schema_from_column(df, 'data')
