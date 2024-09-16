@@ -250,151 +250,104 @@ df_result.display()
 
 # ---- efficiency improvement ------------#
 
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType, DataType
-from pyspark.sql.functions import from_json, col, explode, posexplode
+from pyspark.sql.functions import from_json, col
+from pyspark.sql.types import StructType, StringType
+
+# Infer the schema from your JSON data
+json_schema = spark.read.json(df.select("json_column").rdd.map(lambda x: x.json_column)).schema
+
+# Parse the JSON columnfrom pyspark.sql.types import StructType, ArrayType
+
+def flatten_df(nested_df):
+    flat_cols = []
+    for column_name in nested_df.schema.names:
+        column_type = nested_df.schema[column_name].dataType
+        if isinstance(column_type, StructType):
+            flat_cols.extend([(nested_df[column_name][field.name].alias(column_name + '_' + field.name)) 
+                              for field in column_type])
+        elif isinstance(column_type, ArrayType):
+            flat_cols.append(nested_df[column_name].alias(column_name))
+        else:
+            flat_cols.append(nested_df[column_name].alias(column_name))
+    
+    return nested_df.select(flat_cols)
+
+df_flattened = flatten_df(df_unpacked)
+
+
+
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, DoubleType, BooleanType, ArrayType, MapType
 import json
 
-def infer_schema_from_column(df, column_name, sample_size=10000):
-    """
-    Infers the schema from a DataFrame column containing JSON data.
-    
-    :param df: Input DataFrame
-    :param column_name: Name of the column containing JSON data
-    :param sample_size: Number of rows to sample for schema inference
-    :return: Inferred schema as StructType
-    """
-    # Sample and collect non-null JSON rows
-    json_strings = df.select(column_name).limit(sample_size).dropna().rdd.map(lambda row: row[column_name]).collect()
-    
-    if not json_strings:
-        raise ValueError(f"No non-null JSON data found in column '{column_name}'")
-    
-    # Infer schema from individual JSON samples and merge
-    merged_schema = None
-    for json_string in json_strings:
-        json_data = json.loads(json_string)
-        schema = infer_schema_from_json(json_data)
-        merged_schema = merge_schemas(merged_schema, schema) if merged_schema else schema
-    
-    return merged_schema
-
-def infer_schema_from_json(json_data):
-    """
-    Recursively infer schema from a JSON object.
-    
-    :param json_data: JSON object
-    :return: Inferred schema as StructType
-    """
-    def infer_type(value):
-        if isinstance(value, bool):
-            return BooleanType()
-        elif isinstance(value, int):
-            if value > 2147483647 or value < -2147483648:
-                return LongType()
-            return IntegerType()
-        elif isinstance(value, float):
-            return FloatType()
-        elif isinstance(value, list):
-            if value:
-                return ArrayType(infer_type(value[0]))
-            else:
-                return ArrayType(StringType())  # Default to StringType for empty arrays
-        elif isinstance(value, dict):
-            return infer_schema_from_json(value)
+def generate_schema_from_json_doc(json_doc):
+    def parse_field(field_name, field_info):
+        field_type = field_info.get('type', 'string').lower()
+        nullable = field_info.get('nullable', True)
+        
+        if field_type == 'string':
+            return StructField(field_name, StringType(), nullable)
+        elif field_type == 'integer':
+            return StructField(field_name, IntegerType(), nullable)
+        elif field_type == 'long':
+            return StructField(field_name, LongType(), nullable)
+        elif field_type == 'float':
+            return StructField(field_name, FloatType(), nullable)
+        elif field_type == 'double':
+            return StructField(field_name, DoubleType(), nullable)
+        elif field_type == 'boolean':
+            return StructField(field_name, BooleanType(), nullable)
+        elif field_type == 'array':
+            element_type = parse_field('element', field_info.get('items', {})).dataType
+            return StructField(field_name, ArrayType(element_type), nullable)
+        elif field_type == 'object':
+            nested_fields = [parse_field(k, v) for k, v in field_info.get('properties', {}).items()]
+            return StructField(field_name, StructType(nested_fields), nullable)
+        elif field_type == 'map':
+            key_type = StringType()  # Assuming keys are always strings
+            value_type = parse_field('value', field_info.get('values', {})).dataType
+            return StructField(field_name, MapType(key_type, value_type), nullable)
         else:
-            return StringType()
+            raise ValueError(f"Unsupported type: {field_type}")
 
-    fields = []
-    for key, value in json_data.items():
-        if isinstance(value, dict):
-            fields.append(StructField(key, infer_schema_from_json(value), True))
-        elif isinstance(value, list):
-            if value and isinstance(value[0], dict):
-                # Handle nested array of objects
-                element_type = infer_schema_from_json(value[0])
-                fields.append(StructField(key, ArrayType(element_type), True))
-            elif value:
-                # Handle array of primitive types
-                element_type = infer_type(value[0])
-                fields.append(StructField(key, ArrayType(element_type), True))
-            else:
-                fields.append(StructField(key, ArrayType(StringType()), True))
-        else:
-            fields.append(StructField(key, infer_type(value), True))
-    
+    doc_dict = json.loads(json_doc)
+    fields = [parse_field(k, v) for k, v in doc_dict.items()]
     return StructType(fields)
 
-def merge_schemas(schema1, schema2):
-    """
-    Merges two schemas, handling nested structures and arrays.
+# Example usage:
+json_doc = '''
+{
+    "id": {"type": "long", "nullable": false},
+    "name": {"type": "string"},
+    "age": {"type": "integer"},
+    "is_student": {"type": "boolean"},
+    "scores": {
+        "type": "array",
+        "items": {"type": "double"}
+    },
+    "address": {
+        "type": "object",
+        "properties": {
+            "street": {"type": "string"},
+            "city": {"type": "string"},
+            "zip": {"type": "string"}
+        }
+    },
+    "metadata": {
+        "type": "map",
+        "values": {"type": "string"}
+    }
+}
+'''
 
-    :param schema1: First schema
-    :param schema2: Second schema
-    :return: Merged schema
-    """
-    if schema1 is None:
-        return schema2
-    if schema2 is None:
-        return schema1
+schema = generate_schema_from_json_doc(json_doc)
+print(schema)
 
-    if isinstance(schema1, ArrayType) and isinstance(schema2, ArrayType):
-        # If both are arrays, merge their element types
-        element_type = merge_schemas(schema1.elementType, schema2.elementType)
-        return ArrayType(element_type)
+df_parsed = df.withColumn("parsed_json", from_json(col("json_column"), json_schema))
 
-    if isinstance(schema1, StructType) and isinstance(schema2, StructType):
-        fields1 = {field.name: field for field in schema1.fields}
-        fields2 = {field.name: field for field in schema2.fields}
 
-        merged_fields = []
-        all_keys = set(fields1.keys()) | set(fields2.keys())
+df_unpacked = df_parsed.select("parsed_json.*")
 
-        for key in all_keys:
-            if key in fields1 and key in fields2:
-                # Merge fields that appear in both schemas
-                merged_field = StructField(
-                    key, merge_schemas(fields1[key].dataType, fields2[key].dataType), True
-                )
-                merged_fields.append(merged_field)
-            elif key in fields1:
-                merged_fields.append(fields1[key])
-            else:
-                merged_fields.append(fields2[key])
 
-        return StructType(merged_fields)
-
-    # If types are not the same or are primitive types, prioritize schema1
-    return schema1 if isinstance(schema1, DataType) else schema2
-
-# Parse the JSON column and handle nested structures
-inferred_schema = infer_schema_from_column(df, 'data')
-
-# Parse the JSON column
-df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
-
-# Recursive function to handle explosion of arrays and extraction of struct fields
-def explode_and_flatten(df, schema, prefix=""):
-    for field in schema.fields:
-        field_name = f"{prefix}{field.name}"
-        if isinstance(field.dataType, StructType):
-            # For structs, recurse into the nested fields
-            df = df.withColumn(field.name, col(f"{field_name}"))
-            df = explode_and_flatten(df, field.dataType, prefix=f"{field_name}.")
-        elif isinstance(field.dataType, ArrayType) and isinstance(field.dataType.elementType, StructType):
-            # For arrays of structs, explode the array and recurse
-            df = df.withColumn(field_name, explode(col(f"{field_name}")))
-            df = explode_and_flatten(df, field.dataType.elementType, prefix=f"{field_name}.")
-        else:
-            # For other types, extract directly
-            df = df.withColumn(field.name, col(field_name))
-    return df
-
-# Explode and flatten the nested JSON structure
-df_final = explode_and_flatten(df_parsed, inferred_schema)
-
-# Drop unnecessary columns
-df_final = df_final.drop("data", "parsed_json")
-df_final.display()
 
 
 ```
