@@ -249,6 +249,7 @@ df_result.display()
 
 
 # ---- efficiency improvement ------------#
+
 from pyspark.sql.functions import from_json, col, explode
 from pyspark.sql.types import StructType, ArrayType
 
@@ -259,15 +260,18 @@ def expand_nested_columns(df, prefix=''):
         field_name = prefix + field.name
         
         if isinstance(field.dataType, StructType):
-            # Recursively expand nested structs
-            nested_df = df.select(f"{prefix}{field.name}.*")
+            # For structs, recursively process each field
+            nested_fields = [col(f"{field_name}.{nested_field.name}").alias(f"{field_name}_{nested_field.name}") 
+                             for nested_field in field.dataType.fields]
+            nested_df = df.select(*nested_fields)
             flat_columns.extend(expand_nested_columns(nested_df, prefix=f"{field_name}_"))
         elif isinstance(field.dataType, ArrayType):
-            # For arrays, we'll keep them as is, but explode struct arrays
             if isinstance(field.dataType.elementType, StructType):
+                # For arrays of structs, explode and then expand
                 exploded = df.select(explode(col(field_name)).alias(field_name))
                 flat_columns.extend(expand_nested_columns(exploded, prefix=f"{field_name}_"))
             else:
+                # For arrays of primitive types, keep as is
                 flat_columns.append(col(field_name))
         else:
             # For primitive types, just add the column
@@ -275,13 +279,16 @@ def expand_nested_columns(df, prefix=''):
 
     return flat_columns
 
-# Your existing code
+# Your existing code to parse the JSON
 json_schema = spark.read.json(df.select("json_column").rdd.map(lambda x: x.json_column)).schema
 df_parsed = df.withColumn("parsed_json", from_json(col("json_column"), json_schema))
 
 # Expand the parsed JSON into individual columns
 expanded_columns = expand_nested_columns(df_parsed.select("parsed_json.*"))
-df_expanded = df_parsed.select(*expanded_columns)
+df_expanded = df_parsed.select("*", *expanded_columns)
+
+# Drop the original parsed_json column if you don't need it anymore
+df_expanded = df_expanded.drop("parsed_json")
 
 # Show the resulting dataframe
 df_expanded.show(truncate=False)
@@ -289,6 +296,5 @@ df_expanded.show(truncate=False)
 # Optionally, you can also get the list of all columns
 all_columns = df_expanded.columns
 print("All columns:", all_columns)
-
 
 ```
