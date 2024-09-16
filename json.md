@@ -248,5 +248,121 @@ df_result = df_exploded.drop("data", "parsed_json", "exploded")
 df_result.display()
 
 
+# ---- efficiency improvement ------------#
+
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
+from pyspark.sql.functions import from_json, col, explode
+import json
+from functools import reduce
+
+def infer_schema_from_column(df, column_name, sample_size=100000):
+    """
+    Infers the schema from a DataFrame column containing JSON data.
+    
+    :param df: Input DataFrame
+    :param column_name: Name of the column containing JSON data
+    :param sample_size: Number of rows to sample for schema inference
+    :return: Inferred schema as StructType
+    """
+    # Sample the DataFrame and collect JSON strings
+    df_sample = df.select(column_name).limit(sample_size).rdd.flatMap(lambda x: x).collect()
+    
+    if not df_sample:
+        raise ValueError(f"No non-null JSON data found in column '{column_name}'")
+    
+    # Parse JSON strings in parallel
+    parsed_jsons = df.sparkSession.sparkContext.parallelize(df_sample).map(lambda js: json.loads(js) if js else None).filter(lambda x: x is not None).collect()
+    
+    # Infer schema from parsed JSON data
+    schema = infer_schema_from_json(parsed_jsons)
+    
+    return schema
+
+def infer_schema_from_json(data):
+    """
+    Infers the schema from JSON data.
+    
+    :param data: List of JSON objects or a single JSON object
+    :return: Inferred schema as StructType
+    """
+    if not isinstance(data, list):
+        data = [data]
+    
+    fields = {}
+    for item in data:
+        for key, value in item.items():
+            if key not in fields:
+                fields[key] = set()
+            fields[key].add(infer_type(value))
+    
+    return StructType([
+        StructField(key, merge_types(types), True)
+        for key, types in fields.items()
+    ])
+
+def infer_type(value):
+    """
+    Infers the PySpark SQL type from a Python value.
+    
+    :param value: Python value
+    :return: PySpark SQL type
+    """
+    if isinstance(value, bool):
+        return BooleanType()
+    elif isinstance(value, int):
+        return LongType() if value > 2147483647 or value < -2147483648 else IntegerType()
+    elif isinstance(value, float):
+        return FloatType()
+    elif isinstance(value, list):
+        if not value:
+            return ArrayType(StringType())
+        return ArrayType(merge_types({infer_type(v) for v in value}))
+    elif isinstance(value, dict):
+        return infer_schema_from_json(value)
+    else:
+        return StringType()
+
+def merge_types(types):
+    """
+    Merges multiple PySpark SQL types into a single type.
+    
+    :param types: Set of PySpark SQL types
+    :return: Merged PySpark SQL type
+    """
+    if len(types) == 1:
+        return next(iter(types))
+    
+    # If we have a mix of Int and Long, use Long
+    if IntegerType() in types and LongType() in types:
+        types = {t for t in types if t != IntegerType()}
+    
+    # If we have a mix of numeric types, use the most general
+    numeric_types = {IntegerType(), LongType(), FloatType()}
+    if any(t in types for t in numeric_types):
+        for t in [FloatType(), LongType(), IntegerType()]:
+            if t in types:
+                types = {t if isinstance(t, type(n)) else n for n in types}
+                break
+    
+    # If we still have multiple types, use StringType
+    if len(types) > 1:
+        return StringType()
+    
+    return next(iter(types))
+
+# Usage
+inferred_schema = infer_schema_from_column(df, 'data')
+
+# Parse the JSON column using the inferred schema
+df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
+
+# Select all fields from the parsed JSON
+selected_columns = [col("parsed_json.*")] + [c for c in df.columns if c != "data"]
+df_result = df_parsed.select(*selected_columns)
+
+df_result.display()
+
+
+
 
 ```
