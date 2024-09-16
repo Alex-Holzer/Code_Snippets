@@ -161,28 +161,28 @@ def infer_schema_from_column(df, column_name, sample_size=100000):
     
     return final_schema
 
-def infer_schema_from_json(json_data):
+def infer_schema_from_json(data):
     """
     Recursively infers the schema from a JSON object or array.
     
-    :param json_data: JSON object or array
-    :return: Inferred schema as StructType or ArrayType
+    :param data: JSON object, array, or primitive value
+    :return: Inferred schema as StructType, ArrayType, or a primitive PySpark type
     """
-    if isinstance(json_data, list):
-        if not json_data:
+    if isinstance(data, list):
+        if not data:
             return ArrayType(StringType())  # Default to string for empty arrays
-        element_schemas = [infer_schema_from_json(elem) for elem in json_data]
+        element_schemas = [infer_schema_from_json(elem) for elem in data]
         return ArrayType(merge_schemas_list(element_schemas))
-    elif isinstance(json_data, dict):
+    elif isinstance(data, dict):
         fields = []
-        for key, value in json_data.items():
+        for key, value in data.items():
             fields.append(StructField(key, infer_schema_from_json(value), True))
         return StructType(fields)
-    elif isinstance(value, bool):
+    elif isinstance(data, bool):
         return BooleanType()
-    elif isinstance(value, int):
-        return LongType() if value > 2147483647 or value < -2147483648 else IntegerType()
-    elif isinstance(value, float):
+    elif isinstance(data, int):
+        return LongType() if data > 2147483647 or data < -2147483648 else IntegerType()
+    elif isinstance(data, float):
         return FloatType()
     else:
         return StringType()
@@ -195,7 +195,10 @@ def merge_schemas(schema1, schema2):
     :param schema2: Second schema
     :return: Merged schema
     """
-    if not isinstance(schema1, StructType) or not isinstance(schema2, StructType):
+    if isinstance(schema1, ArrayType) and isinstance(schema2, ArrayType):
+        return ArrayType(merge_schemas(schema1.elementType, schema2.elementType))
+    elif not isinstance(schema1, StructType) or not isinstance(schema2, StructType):
+        # If either is not a StructType, return the more complex one
         return schema1 if isinstance(schema1, StructType) else schema2
     
     fields1 = {field.name: field for field in schema1.fields}
