@@ -250,27 +250,29 @@ df_result.display()
 
 # ---- efficiency improvement ------------#
 
-
-from pyspark.sql.functions import from_json, col
+from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType
 
-# Step 1: Sample the DataFrame to avoid overloading the Driver Node
-# Sample size can be adjusted depending on your dataset size. Ensure it's representative.
+# Step 1: Sample the DataFrame to avoid overloading the driver
 sample_size = 1000  # For instance, sample 1000 rows
-df_sample = df.sample(False, fraction=sample_size/df.count(), seed=42)
+df_sample = df.sample(False, fraction=sample_size / df.count(), seed=42)
 
-# Step 2: Dynamically Infer Schema from Sample
+# Step 2: Dynamically infer the schema from the sampled JSON data
+# No need to use json.loads() here, just collect the schema string directly
 sample_schema_str = df_sample.selectExpr("schema_of_json(data)").collect()[0][0]
-sample_schema = StructType.fromJson(json.loads(sample_schema_str))
 
-# Step 3: Parse the JSON column using the inferred schema
+# Step 3: Convert the schema string to a StructType
+sample_schema = StructType.fromJson(eval(sample_schema_str))
+
+# Step 4: Parse the JSON column using the inferred schema
 df_parsed = df.withColumn("data_parsed", from_json(col("data"), sample_schema))
 
-# Step 4: Recursive function to unpack the parsed JSON
-# (Continue with the unpack_json function logic from the previous example)
+# Step 5: Apply the unpack_json function logic to recursively unpack nested fields
 df_unpacked = unpack_json(df_parsed, "data_parsed")
 
+# Show the unpacked DataFrame
 df_unpacked.show()
+
 
 
 
