@@ -251,7 +251,7 @@ df_result.display()
 # ---- efficiency improvement ------------#
 
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
-from pyspark.sql.functions import from_json, col, explode, posexplode, schema_of_json
+from pyspark.sql.functions import from_json, col, explode, posexplode, to_json, schema_of_json
 import json
 
 def infer_schema_from_column(df, column_name, sample_size=100000):
@@ -263,22 +263,20 @@ def infer_schema_from_column(df, column_name, sample_size=100000):
     :param sample_size: Number of rows to sample for schema inference
     :return: Inferred schema as StructType
     """
-    # Sample the DataFrame
-    df_sample = df.select(column_name).sample(False, fraction=min(1.0, sample_size / df.count()))
-    
-    # Collect JSON strings
+    # Sample the DataFrame and collect JSON strings
+    df_sample = df.select(column_name).limit(sample_size)
     json_strings = [row[column_name] for row in df_sample.collect() if row[column_name] is not None]
     
     if not json_strings:
         raise ValueError(f"No non-null JSON data found in column '{column_name}'")
     
-    # Infer schema for each JSON string and merge them
-    schemas = [schema_of_json(json_string) for json_string in json_strings]
-    merged_schema = schemas[0]
-    for schema in schemas[1:]:
-        merged_schema = merge_schemas(merged_schema, schema)
+    # Combine all JSON objects into a single array
+    combined_json = "[" + ",".join(json_strings) + "]"
     
-    return merged_schema
+    # Create a temporary view of the combined JSON
+    temp_df = spark.read.json(spark.sparkContext.parallelize([combined_json]))
+    
+    return temp_df.schema
 
 def merge_schemas(schema1, schema2):
     """
@@ -310,53 +308,57 @@ def merge_schemas(schema1, schema2):
     
     return StructType(merged_fields)
 
-def flatten_schema(schema, prefix=""):
+def process_json_column(df, column_name):
     """
-    Flattens a nested schema.
+    Process a JSON column, handling both single objects and arrays of objects.
     
-    :param schema: The schema to flatten
-    :param prefix: Prefix for nested field names
-    :return: List of flattened field names
+    :param df: Input DataFrame
+    :param column_name: Name of the column containing JSON data
+    :return: Processed DataFrame
     """
-    flattened = []
-    for field in schema.fields:
-        name = prefix + field.name
-        if isinstance(field.dataType, StructType):
-            flattened.extend(flatten_schema(field.dataType, name + "_"))
-        elif isinstance(field.dataType, ArrayType) and isinstance(field.dataType.elementType, StructType):
-            flattened.append(name)
-            flattened.extend([f"{name}_exploded_{subfield}" for subfield in flatten_schema(field.dataType.elementType)])
-        else:
-            flattened.append(name)
-    return flattened
-
-# Infer the schema
-inferred_schema = infer_schema_from_column(df, 'data')
-
-# Parse the JSON column
-df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
-
-# Flatten the schema
-flattened_fields = flatten_schema(inferred_schema)
-
-# Create individual columns for each field in the JSON
-for field in flattened_fields:
-    parts = field.split('_')
-    if len(parts) > 1 and parts[-2] == "exploded":
-        # Handle exploded array fields
-        array_field = "_".join(parts[:-2])
-        exploded_field = parts[-1]
-        df_parsed = df_parsed.withColumn(f"{array_field}_temp", explode(col(f"parsed_json.{array_field}")))
-        df_parsed = df_parsed.withColumn(field, col(f"{array_field}_temp.{exploded_field}"))
-        df_parsed = df_parsed.drop(f"{array_field}_temp")
+    # Infer the schema from the JSON column
+    inferred_schema = infer_schema_from_column(df, column_name)
+    
+    # Check if the inferred schema is an array type
+    if isinstance(inferred_schema.fields[0].dataType, ArrayType):
+        # If it's an array, use the element type for parsing
+        json_schema = inferred_schema.fields[0].dataType.elementType
+        df_parsed = df.withColumn("parsed_json", from_json(col(column_name), ArrayType(json_schema)))
+        df_exploded = df_parsed.withColumn("exploded", explode("parsed_json"))
     else:
-        # Handle regular fields
-        df_parsed = df_parsed.withColumn(field, col(f"parsed_json.{field}"))
+        # If it's not an array, use the inferred schema directly
+        json_schema = inferred_schema
+        df_parsed = df.withColumn("parsed_json", from_json(col(column_name), json_schema))
+        df_exploded = df_parsed.withColumn("exploded", col("parsed_json"))
+    
+    # Create individual columns for each field in the JSON
+    for field in json_schema.fields:
+        if isinstance(field.dataType, StructType):
+            # For nested objects, create a column with the struct
+            df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+        elif isinstance(field.dataType, ArrayType):
+            # For arrays, keep them as a single column
+            df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+        else:
+            # For simple types, create a column directly
+            df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+    
+    # Drop the original JSON column and the intermediate columns
+    df_result = df_exploded.drop(column_name, "parsed_json", "exploded")
+    
+    return df_result
 
-# Drop the original JSON column and the intermediate columns
-df_result = df_parsed.drop("data", "parsed_json")
+# Example usage in Databricks
+# Assume 'df' is your input DataFrame with a 'data' column containing JSON
+# df = spark.createDataFrame([
+#     ("1", '{"name": "Alice", "age": 30}'),
+#     ("2", '[{"name": "Bob", "age": 25}, {"name": "Charlie", "age": 35}]')
+# ], ["id", "data"])
+
+# Process the JSON column
+df_result = process_json_column(df, "data")
 
 # Display the result
-df_result.display()
+display(df_result)
 
 ```
