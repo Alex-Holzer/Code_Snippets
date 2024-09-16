@@ -59,7 +59,7 @@ from pyspark.sql.types import StructType, ArrayType
 def unpack_structured_column(df, column_name):
     """
     Recursively unpacks a structured column in a PySpark DataFrame,
-    flattening nested structures and unpacking the last value of arrays of structs.
+    flattening nested structures and unpacking the last element of arrays of structs.
     
     Args:
     df (DataFrame): The input PySpark DataFrame.
@@ -93,7 +93,7 @@ def unpack_structured_column(df, column_name):
             flat_fields = flatten_struct(field_type.elementType)
             for flat_field in flat_fields:
                 if flat_field.startswith(parent_col + "_last_"):
-                    array_expr = f"element_at({parent_col}, size({parent_col})).{flat_field.split('_last_')[1].replace('_', '.')}"
+                    array_expr = f"{parent_col}[size({parent_col}) - 1].{flat_field.split('_last_')[1].replace('_', '.')}"
                     df = df.withColumn(flat_field, expr(array_expr))
         else:
             df = df.withColumn(parent_col, col(parent_col))
