@@ -250,7 +250,7 @@ df_result.display()
 
 # ---- efficiency improvement ------------#
 
-from pyspark.sql.functions import from_json, col, explode
+from pyspark.sql.functions import from_json, col, explode, expr
 from pyspark.sql.types import StructType, ArrayType
 
 def expand_nested_columns(df, prefix=''):
@@ -267,9 +267,9 @@ def expand_nested_columns(df, prefix=''):
             flat_columns.extend(expand_nested_columns(nested_df, prefix=f"{field_name}_"))
         elif isinstance(field.dataType, ArrayType):
             if isinstance(field.dataType.elementType, StructType):
-                # For arrays of structs, explode and then expand
-                exploded = df.select(explode(col(field_name)).alias(field_name))
-                flat_columns.extend(expand_nested_columns(exploded, prefix=f"{field_name}_"))
+                # For arrays of structs, create separate columns for each struct field
+                for nested_field in field.dataType.elementType.fields:
+                    flat_columns.append(expr(f"transform({field_name}, x -> x.{nested_field.name})").alias(f"{field_name}_{nested_field.name}"))
             else:
                 # For arrays of primitive types, keep as is
                 flat_columns.append(col(field_name))
@@ -296,5 +296,11 @@ df_expanded.show(truncate=False)
 # Optionally, you can also get the list of all columns
 all_columns = df_expanded.columns
 print("All columns:", all_columns)
+
+# If you need to work with individual elements of the lvks array, you can explode it like this:
+df_exploded = df_expanded.select("*", explode("lvks_atr").alias("lvks_atr_element"))
+
+# Now you can work with individual atr elements
+df_exploded.select("lvks_atr_element").show(truncate=False)
 
 ```
