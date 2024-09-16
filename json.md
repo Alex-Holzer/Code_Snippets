@@ -251,7 +251,7 @@ df_result.display()
 # ---- efficiency improvement ------------#
 
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
-from pyspark.sql.functions import from_json, col, explode, posexplode
+from pyspark.sql.functions import from_json, col, explode, posexplode, schema_of_json
 import json
 
 def infer_schema_from_column(df, column_name, sample_size=100000):
@@ -263,63 +263,31 @@ def infer_schema_from_column(df, column_name, sample_size=100000):
     :param sample_size: Number of rows to sample for schema inference
     :return: Inferred schema as StructType
     """
-    df_sample = df.select(column_name).limit(sample_size)
+    # Sample the DataFrame
+    df_sample = df.select(column_name).sample(False, fraction=min(1.0, sample_size / df.count()))
+    
+    # Collect JSON strings
     json_strings = [row[column_name] for row in df_sample.collect() if row[column_name] is not None]
     
     if not json_strings:
         raise ValueError(f"No non-null JSON data found in column '{column_name}'")
     
-    parsed_jsons = [json.loads(js) for js in json_strings]
-    
-    return infer_schema_from_json(parsed_jsons)
-
-def infer_schema_from_json(data):
-    if isinstance(data, list):
-        # If it's a list of objects, infer schema from each object and merge
-        schemas = [infer_schema_from_json(item) for item in data if isinstance(item, dict)]
-        return merge_schemas(schemas)
-    elif isinstance(data, dict):
-        fields = []
-        for key, value in data.items():
-            field_type = infer_type(value)
-            fields.append(StructField(key, field_type, True))
-        return StructType(fields)
-    else:
-        # If it's not a list or dict, it's a single value
-        return infer_type(data)
-
-def infer_type(value):
-    if isinstance(value, bool):
-        return BooleanType()
-    elif isinstance(value, int):
-        if value > 2147483647 or value < -2147483648:
-            return LongType()
-        return IntegerType()
-    elif isinstance(value, float):
-        return FloatType()
-    elif isinstance(value, list):
-        if value:
-            # Infer type from the first non-null element
-            first_non_null = next((item for item in value if item is not None), None)
-            if first_non_null is not None:
-                return ArrayType(infer_type(first_non_null))
-        return ArrayType(StringType())  # Default to string for empty arrays
-    elif isinstance(value, dict):
-        return infer_schema_from_json(value)
-    else:
-        return StringType()
-
-def merge_schemas(schemas):
-    if not schemas:
-        return StructType([])
-    
+    # Infer schema for each JSON string and merge them
+    schemas = [schema_of_json(json_string) for json_string in json_strings]
     merged_schema = schemas[0]
     for schema in schemas[1:]:
-        merged_schema = merge_two_schemas(merged_schema, schema)
+        merged_schema = merge_schemas(merged_schema, schema)
     
     return merged_schema
 
-def merge_two_schemas(schema1, schema2):
+def merge_schemas(schema1, schema2):
+    """
+    Merges two schemas, combining fields and handling conflicts.
+    
+    :param schema1: First schema
+    :param schema2: Second schema
+    :return: Merged schema
+    """
     if not isinstance(schema1, StructType) or not isinstance(schema2, StructType):
         # If either schema is not a StructType, return the more complex one
         return schema1 if isinstance(schema1, StructType) else schema2
@@ -332,11 +300,8 @@ def merge_two_schemas(schema1, schema2):
     
     for key in all_keys:
         if key in fields1 and key in fields2:
-            merged_field = StructField(
-                key, 
-                merge_two_schemas(fields1[key].dataType, fields2[key].dataType),
-                fields1[key].nullable or fields2[key].nullable
-            )
+            # If the field is in both schemas, merge them
+            merged_field = StructField(key, merge_schemas(fields1[key].dataType, fields2[key].dataType), True)
             merged_fields.append(merged_field)
         elif key in fields1:
             merged_fields.append(fields1[key])
@@ -345,28 +310,53 @@ def merge_two_schemas(schema1, schema2):
     
     return StructType(merged_fields)
 
-# Usage example
+def flatten_schema(schema, prefix=""):
+    """
+    Flattens a nested schema.
+    
+    :param schema: The schema to flatten
+    :param prefix: Prefix for nested field names
+    :return: List of flattened field names
+    """
+    flattened = []
+    for field in schema.fields:
+        name = prefix + field.name
+        if isinstance(field.dataType, StructType):
+            flattened.extend(flatten_schema(field.dataType, name + "_"))
+        elif isinstance(field.dataType, ArrayType) and isinstance(field.dataType.elementType, StructType):
+            flattened.append(name)
+            flattened.extend([f"{name}_exploded_{subfield}" for subfield in flatten_schema(field.dataType.elementType)])
+        else:
+            flattened.append(name)
+    return flattened
+
+# Infer the schema
 inferred_schema = infer_schema_from_column(df, 'data')
 
-# Parse the JSON column and explode the resulting array if necessary
-if isinstance(inferred_schema, ArrayType):
-    df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
-    df_exploded = df_parsed.withColumn("exploded", explode("parsed_json"))
-else:
-    df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
-    df_exploded = df_parsed.withColumn("exploded", col("parsed_json"))
+# Parse the JSON column
+df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
+
+# Flatten the schema
+flattened_fields = flatten_schema(inferred_schema)
 
 # Create individual columns for each field in the JSON
-for field in inferred_schema.fields if isinstance(inferred_schema, StructType) else [StructField("value", inferred_schema)]:
-    if isinstance(field.dataType, StructType):
-        df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
-    elif isinstance(field.dataType, ArrayType):
-        df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+for field in flattened_fields:
+    parts = field.split('_')
+    if len(parts) > 1 and parts[-2] == "exploded":
+        # Handle exploded array fields
+        array_field = "_".join(parts[:-2])
+        exploded_field = parts[-1]
+        df_parsed = df_parsed.withColumn(f"{array_field}_temp", explode(col(f"parsed_json.{array_field}")))
+        df_parsed = df_parsed.withColumn(field, col(f"{array_field}_temp.{exploded_field}"))
+        df_parsed = df_parsed.drop(f"{array_field}_temp")
     else:
-        df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+        # Handle regular fields
+        df_parsed = df_parsed.withColumn(field, col(f"parsed_json.{field}"))
 
 # Drop the original JSON column and the intermediate columns
-df_result = df_exploded.drop("data", "parsed_json", "exploded")
+df_result = df_parsed.drop("data", "parsed_json")
+
+# Display the result
 df_result.display()
 
 ```
