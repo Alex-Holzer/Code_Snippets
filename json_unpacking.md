@@ -114,18 +114,20 @@ def unpack_structured_column(df, column_name):
 
 ## ------- test new verions ---------
 
-from pyspark.sql.functions import col, expr, when, size, explode
+from pyspark.sql.functions import col, expr, when, size, explode, array_except
 from pyspark.sql.types import StructType, ArrayType
 
-def unpack_structured_column(df, column_name):
+def unpack_structured_column(df, column_name, num_objects=None):
     """
     Recursively unpacks a structured column in a PySpark DataFrame,
     flattening nested structures and handling arrays generically.
-    Also unpacks each element of the last array element.
+    Extracts individual objects from the last array entry as separate columns.
     
     Args:
     df (DataFrame): The input PySpark DataFrame.
     column_name (str): The name of the column to unpack.
+    num_objects (int, optional): Number of objects to extract from the end of the array.
+                                 If None, all objects are extracted.
     
     Returns:
     DataFrame: The DataFrame with the unpacked columns.
@@ -150,18 +152,29 @@ def unpack_structured_column(df, column_name):
                 full_name = f"{parent_col}.{flat_field.replace('_', '.')}"
                 df = df.withColumn(parent_col + "_" + flat_field, col(full_name))
         elif isinstance(field_type, ArrayType):
-            # For array types, we create a column for the last element
-            df = df.withColumn(
-                f"{parent_col}_last",
-                when(size(col(parent_col)) > 0, col(parent_col)[size(col(parent_col)) - 1])
-            )
-            # If the array contains structs, unpack the last element
-            if isinstance(field_type.elementType, StructType):
-                df = unpack_struct(df, f"{parent_col}_last")
+            # For array types, we create columns for individual objects from the end
+            array_size = df.select(size(col(parent_col))).first()[0]
             
-            # Unpack each element of the last array element
-            df = df.withColumn(f"{parent_col}_last_unpacked", explode(col(f"{parent_col}_last")))
-            df = unpack_struct(df, f"{parent_col}_last_unpacked")
+            if num_objects is None or num_objects > array_size:
+                objects_to_extract = array_size
+            else:
+                objects_to_extract = num_objects
+            
+            for i in range(objects_to_extract):
+                index = -objects_to_extract + i
+                df = df.withColumn(
+                    f"{parent_col}_obj_{i}",
+                    when(size(col(parent_col)) > abs(index), col(parent_col)[index])
+                )
+                if isinstance(field_type.elementType, StructType):
+                    df = unpack_struct(df, f"{parent_col}_obj_{i}")
+            
+            # Remove extracted objects from the original array
+            if num_objects is not None and num_objects < array_size:
+                df = df.withColumn(
+                    parent_col,
+                    array_except(col(parent_col), array(*[col(f"{parent_col}_obj_{i}") for i in range(objects_to_extract)]))
+                )
         else:
             df = df.withColumn(parent_col, col(parent_col))
         return df
@@ -170,7 +183,10 @@ def unpack_structured_column(df, column_name):
 
 # Usage example:
 # Assuming 'df' is your DataFrame and 'parsed_json' is the structured column
+# To extract all objects:
 # unpacked_df = unpack_structured_column(df, "parsed_json")
+# To extract the last 3 objects:
+# unpacked_df = unpack_structured_column(df, "parsed_json", num_objects=3)
 
 # To unpack specific nested structures:
 # unpacked_df = unpack_structured_column(df, "parsed_json_keys")
