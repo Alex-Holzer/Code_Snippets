@@ -251,9 +251,8 @@ df_result.display()
 # ---- efficiency improvement ------------#
 
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, BooleanType, ArrayType
-from pyspark.sql.functions import from_json, col, explode
+from pyspark.sql.functions import from_json, col, explode, posexplode
 import json
-from functools import reduce
 
 def infer_schema_from_column(df, column_name, sample_size=100000):
     """
@@ -264,105 +263,110 @@ def infer_schema_from_column(df, column_name, sample_size=100000):
     :param sample_size: Number of rows to sample for schema inference
     :return: Inferred schema as StructType
     """
-    # Sample the DataFrame and collect JSON strings
-    df_sample = df.select(column_name).limit(sample_size).rdd.flatMap(lambda x: x).collect()
+    df_sample = df.select(column_name).limit(sample_size)
+    json_strings = [row[column_name] for row in df_sample.collect() if row[column_name] is not None]
     
-    if not df_sample:
+    if not json_strings:
         raise ValueError(f"No non-null JSON data found in column '{column_name}'")
     
-    # Parse JSON strings in parallel
-    parsed_jsons = df.sparkSession.sparkContext.parallelize(df_sample).map(lambda js: json.loads(js) if js else None).filter(lambda x: x is not None).collect()
+    parsed_jsons = [json.loads(js) for js in json_strings]
     
-    # Infer schema from parsed JSON data
-    schema = infer_schema_from_json(parsed_jsons)
-    
-    return schema
+    return infer_schema_from_json(parsed_jsons)
 
 def infer_schema_from_json(data):
-    """
-    Infers the schema from JSON data.
-    
-    :param data: List of JSON objects or a single JSON object
-    :return: Inferred schema as StructType
-    """
-    if not isinstance(data, list):
-        data = [data]
-    
-    fields = {}
-    for item in data:
-        for key, value in item.items():
-            if key not in fields:
-                fields[key] = set()
-            fields[key].add(infer_type(value))
-    
-    return StructType([
-        StructField(key, merge_types(types), True)
-        for key, types in fields.items()
-    ])
+    if isinstance(data, list):
+        # If it's a list of objects, infer schema from each object and merge
+        schemas = [infer_schema_from_json(item) for item in data if isinstance(item, dict)]
+        return merge_schemas(schemas)
+    elif isinstance(data, dict):
+        fields = []
+        for key, value in data.items():
+            field_type = infer_type(value)
+            fields.append(StructField(key, field_type, True))
+        return StructType(fields)
+    else:
+        # If it's not a list or dict, it's a single value
+        return infer_type(data)
 
 def infer_type(value):
-    """
-    Infers the PySpark SQL type from a Python value.
-    
-    :param value: Python value
-    :return: PySpark SQL type
-    """
     if isinstance(value, bool):
         return BooleanType()
     elif isinstance(value, int):
-        return LongType() if value > 2147483647 or value < -2147483648 else IntegerType()
+        if value > 2147483647 or value < -2147483648:
+            return LongType()
+        return IntegerType()
     elif isinstance(value, float):
         return FloatType()
     elif isinstance(value, list):
-        if not value:
-            return ArrayType(StringType())
-        return ArrayType(merge_types({infer_type(v) for v in value}))
+        if value:
+            # Infer type from the first non-null element
+            first_non_null = next((item for item in value if item is not None), None)
+            if first_non_null is not None:
+                return ArrayType(infer_type(first_non_null))
+        return ArrayType(StringType())  # Default to string for empty arrays
     elif isinstance(value, dict):
         return infer_schema_from_json(value)
     else:
         return StringType()
 
-def merge_types(types):
-    """
-    Merges multiple PySpark SQL types into a single type.
+def merge_schemas(schemas):
+    if not schemas:
+        return StructType([])
     
-    :param types: Set of PySpark SQL types
-    :return: Merged PySpark SQL type
-    """
-    if len(types) == 1:
-        return next(iter(types))
+    merged_schema = schemas[0]
+    for schema in schemas[1:]:
+        merged_schema = merge_two_schemas(merged_schema, schema)
     
-    # If we have a mix of Int and Long, use Long
-    if IntegerType() in types and LongType() in types:
-        types = {t for t in types if t != IntegerType()}
-    
-    # If we have a mix of numeric types, use the most general
-    numeric_types = {IntegerType(), LongType(), FloatType()}
-    if any(t in types for t in numeric_types):
-        for t in [FloatType(), LongType(), IntegerType()]:
-            if t in types:
-                types = {t if isinstance(t, type(n)) else n for n in types}
-                break
-    
-    # If we still have multiple types, use StringType
-    if len(types) > 1:
-        return StringType()
-    
-    return next(iter(types))
+    return merged_schema
 
-# Usage
+def merge_two_schemas(schema1, schema2):
+    if not isinstance(schema1, StructType) or not isinstance(schema2, StructType):
+        # If either schema is not a StructType, return the more complex one
+        return schema1 if isinstance(schema1, StructType) else schema2
+    
+    fields1 = {field.name: field for field in schema1.fields}
+    fields2 = {field.name: field for field in schema2.fields}
+    
+    merged_fields = []
+    all_keys = set(fields1.keys()) | set(fields2.keys())
+    
+    for key in all_keys:
+        if key in fields1 and key in fields2:
+            merged_field = StructField(
+                key, 
+                merge_two_schemas(fields1[key].dataType, fields2[key].dataType),
+                fields1[key].nullable or fields2[key].nullable
+            )
+            merged_fields.append(merged_field)
+        elif key in fields1:
+            merged_fields.append(fields1[key])
+        else:
+            merged_fields.append(fields2[key])
+    
+    return StructType(merged_fields)
+
+# Usage example
 inferred_schema = infer_schema_from_column(df, 'data')
 
-# Parse the JSON column using the inferred schema
-df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
+# Parse the JSON column and explode the resulting array if necessary
+if isinstance(inferred_schema, ArrayType):
+    df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
+    df_exploded = df_parsed.withColumn("exploded", explode("parsed_json"))
+else:
+    df_parsed = df.withColumn("parsed_json", from_json(col("data"), inferred_schema))
+    df_exploded = df_parsed.withColumn("exploded", col("parsed_json"))
 
-# Select all fields from the parsed JSON
-selected_columns = [col("parsed_json.*")] + [c for c in df.columns if c != "data"]
-df_result = df_parsed.select(*selected_columns)
+# Create individual columns for each field in the JSON
+for field in inferred_schema.fields if isinstance(inferred_schema, StructType) else [StructField("value", inferred_schema)]:
+    if isinstance(field.dataType, StructType):
+        df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+    elif isinstance(field.dataType, ArrayType):
+        df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
+    else:
+        df_exploded = df_exploded.withColumn(field.name, col(f"exploded.{field.name}"))
 
+# Drop the original JSON column and the intermediate columns
+df_result = df_exploded.drop("data", "parsed_json", "exploded")
 df_result.display()
-
-
-
 
 ```
