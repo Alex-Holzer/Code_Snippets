@@ -249,105 +249,46 @@ df_result.display()
 
 
 # ---- efficiency improvement ------------#
+from pyspark.sql.functions import from_json, col, explode
+from pyspark.sql.types import StructType, ArrayType
 
-from pyspark.sql.functions import from_json, col
-from pyspark.sql.types import StructType, StringType
+def expand_nested_columns(df, prefix=''):
+    flat_columns = []
 
-# Infer the schema from your JSON data
-json_schema = spark.read.json(df.select("json_column").rdd.map(lambda x: x.json_column)).schema
-
-# Parse the JSON columnfrom pyspark.sql.types import StructType, ArrayType
-
-def flatten_df(nested_df):
-    flat_cols = []
-    for column_name in nested_df.schema.names:
-        column_type = nested_df.schema[column_name].dataType
-        if isinstance(column_type, StructType):
-            flat_cols.extend([(nested_df[column_name][field.name].alias(column_name + '_' + field.name)) 
-                              for field in column_type])
-        elif isinstance(column_type, ArrayType):
-            flat_cols.append(nested_df[column_name].alias(column_name))
-        else:
-            flat_cols.append(nested_df[column_name].alias(column_name))
-    
-    return nested_df.select(flat_cols)
-
-df_flattened = flatten_df(df_unpacked)
-
-
-
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType, DoubleType, BooleanType, ArrayType, MapType
-import json
-
-def generate_schema_from_json_doc(json_doc):
-    def parse_field(field_name, field_info):
-        field_type = field_info.get('type', 'string').lower()
-        nullable = field_info.get('nullable', True)
+    for field in df.schema.fields:
+        field_name = prefix + field.name
         
-        if field_type == 'string':
-            return StructField(field_name, StringType(), nullable)
-        elif field_type == 'integer':
-            return StructField(field_name, IntegerType(), nullable)
-        elif field_type == 'long':
-            return StructField(field_name, LongType(), nullable)
-        elif field_type == 'float':
-            return StructField(field_name, FloatType(), nullable)
-        elif field_type == 'double':
-            return StructField(field_name, DoubleType(), nullable)
-        elif field_type == 'boolean':
-            return StructField(field_name, BooleanType(), nullable)
-        elif field_type == 'array':
-            element_type = parse_field('element', field_info.get('items', {})).dataType
-            return StructField(field_name, ArrayType(element_type), nullable)
-        elif field_type == 'object':
-            nested_fields = [parse_field(k, v) for k, v in field_info.get('properties', {}).items()]
-            return StructField(field_name, StructType(nested_fields), nullable)
-        elif field_type == 'map':
-            key_type = StringType()  # Assuming keys are always strings
-            value_type = parse_field('value', field_info.get('values', {})).dataType
-            return StructField(field_name, MapType(key_type, value_type), nullable)
+        if isinstance(field.dataType, StructType):
+            # Recursively expand nested structs
+            nested_df = df.select(f"{prefix}{field.name}.*")
+            flat_columns.extend(expand_nested_columns(nested_df, prefix=f"{field_name}_"))
+        elif isinstance(field.dataType, ArrayType):
+            # For arrays, we'll keep them as is, but explode struct arrays
+            if isinstance(field.dataType.elementType, StructType):
+                exploded = df.select(explode(col(field_name)).alias(field_name))
+                flat_columns.extend(expand_nested_columns(exploded, prefix=f"{field_name}_"))
+            else:
+                flat_columns.append(col(field_name))
         else:
-            raise ValueError(f"Unsupported type: {field_type}")
+            # For primitive types, just add the column
+            flat_columns.append(col(field_name))
 
-    doc_dict = json.loads(json_doc)
-    fields = [parse_field(k, v) for k, v in doc_dict.items()]
-    return StructType(fields)
+    return flat_columns
 
-# Example usage:
-json_doc = '''
-{
-    "id": {"type": "long", "nullable": false},
-    "name": {"type": "string"},
-    "age": {"type": "integer"},
-    "is_student": {"type": "boolean"},
-    "scores": {
-        "type": "array",
-        "items": {"type": "double"}
-    },
-    "address": {
-        "type": "object",
-        "properties": {
-            "street": {"type": "string"},
-            "city": {"type": "string"},
-            "zip": {"type": "string"}
-        }
-    },
-    "metadata": {
-        "type": "map",
-        "values": {"type": "string"}
-    }
-}
-'''
-
-schema = generate_schema_from_json_doc(json_doc)
-print(schema)
-
+# Your existing code
+json_schema = spark.read.json(df.select("json_column").rdd.map(lambda x: x.json_column)).schema
 df_parsed = df.withColumn("parsed_json", from_json(col("json_column"), json_schema))
 
+# Expand the parsed JSON into individual columns
+expanded_columns = expand_nested_columns(df_parsed.select("parsed_json.*"))
+df_expanded = df_parsed.select(*expanded_columns)
 
-df_unpacked = df_parsed.select("parsed_json.*")
+# Show the resulting dataframe
+df_expanded.show(truncate=False)
 
-
+# Optionally, you can also get the list of all columns
+all_columns = df_expanded.columns
+print("All columns:", all_columns)
 
 
 ```
