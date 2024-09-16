@@ -39,6 +39,11 @@ def unpack_structured_column(df, column_name):
 # Assuming 'df' is your DataFrame and 'parsed_json' is the structured column
 # unpacked_df = unpack_structured_column(df, "parsed_json")
 
+# To unpack specific nested structures, you can call the function like this:
+# unpacked_df = unpack_structured_column(df, "parsed_json.keys")
+# unpacked_df = unpack_structured_column(unpacked_df, "parsed_json.lvks")
+# unpacked_df = unpack_structured_column(unpacked_df, "parsed_json.lvv")
+# unpacked_df = unpack_structured_column(unpacked_df, "parsed_json.vtg")
 
 
 ```
