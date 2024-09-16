@@ -53,13 +53,13 @@ def unpack_structured_column(df, column_name):
 
 # ---- improved -------
 
-from pyspark.sql.functions import col, explode_outer
+from pyspark.sql.functions import col, expr
 from pyspark.sql.types import StructType, ArrayType
 
 def unpack_structured_column(df, column_name):
     """
     Recursively unpacks a structured column in a PySpark DataFrame,
-    flattening nested structures and unpacking arrays of structs.
+    flattening nested structures and unpacking the last value of arrays of structs.
     
     Args:
     df (DataFrame): The input PySpark DataFrame.
@@ -75,7 +75,7 @@ def unpack_structured_column(df, column_name):
             if isinstance(field.dataType, StructType):
                 flat_fields.extend(flatten_struct(field.dataType, name + "_"))
             elif isinstance(field.dataType, ArrayType) and isinstance(field.dataType.elementType, StructType):
-                flat_fields.extend(flatten_struct(field.dataType.elementType, name + "_"))
+                flat_fields.extend(flatten_struct(field.dataType.elementType, name + "_last_"))
                 flat_fields.append(name)  # Keep the original array column
             else:
                 flat_fields.append(name)
@@ -89,17 +89,12 @@ def unpack_structured_column(df, column_name):
                 full_name = f"{parent_col}.{flat_field.replace('_', '.')}"
                 df = df.withColumn(parent_col + "_" + flat_field, col(full_name))
         elif isinstance(field_type, ArrayType) and isinstance(field_type.elementType, StructType):
-            # For array types containing structs, we explode and flatten
-            array_df = df.withColumn(f"{parent_col}_exploded", explode_outer(col(parent_col)))
+            # For array types containing structs, we get the last element and flatten
             flat_fields = flatten_struct(field_type.elementType)
             for flat_field in flat_fields:
-                full_name = f"{parent_col}_exploded.{flat_field.replace('_', '.')}"
-                array_df = array_df.withColumn(f"{parent_col}_{flat_field}", col(full_name))
-            # Aggregate the exploded columns back to the original row level
-            agg_exprs = [col(c) for c in df.columns] + \
-                        [col(f"{parent_col}_{field}").alias(f"{parent_col}_{field}")
-                         for field in flat_fields]
-            df = array_df.groupBy([c for c in df.columns if c != parent_col]).agg(*agg_exprs)
+                if flat_field.startswith(parent_col + "_last_"):
+                    array_expr = f"element_at({parent_col}, size({parent_col})).{flat_field.split('_last_')[1].replace('_', '.')}"
+                    df = df.withColumn(flat_field, expr(array_expr))
         else:
             df = df.withColumn(parent_col, col(parent_col))
         return df
@@ -115,6 +110,5 @@ def unpack_structured_column(df, column_name):
 # unpacked_df = unpack_structured_column(unpacked_df, "parsed_json.lvks")
 # unpacked_df = unpack_structured_column(unpacked_df, "parsed_json.lvv")
 # unpacked_df = unpack_structured_column(unpacked_df, "parsed_json.vtg")
-
 
 ```
