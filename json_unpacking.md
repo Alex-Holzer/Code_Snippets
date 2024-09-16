@@ -1,83 +1,44 @@
 ```python
 
-from pyspark.sql.functions import col, explode
+from pyspark.sql.functions import col, explode_outer
 from pyspark.sql.types import StructType, ArrayType
-from typing import List, Union
 
-def extract_nested_values(
-    df: "pyspark.sql.DataFrame",
-    json_column: str,
-    paths: Union[str, List[str]],
-    explode_arrays: bool = False
-) -> "pyspark.sql.DataFrame":
+def unpack_structured_column(df, column_name):
     """
-    Efficiently extracts values from a nested JSON structure in a PySpark DataFrame.
-
+    Recursively unpacks a structured column in a PySpark DataFrame.
+    
     Args:
-        df (pyspark.sql.DataFrame): Input DataFrame with parsed JSON data.
-        json_column (str): Name of the column containing parsed JSON data.
-        paths (Union[str, List[str]]): Dot-notated path(s) to the desired field(s).
-        explode_arrays (bool, optional): Whether to explode array fields. Defaults to False.
-
+    df (DataFrame): The input PySpark DataFrame.
+    column_name (str): The name of the column to unpack.
+    
     Returns:
-        pyspark.sql.DataFrame: DataFrame with extracted values.
-
-    Example:
-        >>> df = spark.createDataFrame([("1", '{"lvv": {"objektZustand": {"val": "AKTIV"}}}')], ["id", "data"])
-        >>> parsed_df = infer_and_parse_json_column(df, "data", "json_data")
-        >>> result = extract_nested_values(parsed_df, "json_data", "lvv.objektZustand.val")
-        >>> result.show()
+    DataFrame: The DataFrame with the unpacked columns.
     """
-    if isinstance(paths, str):
-        paths = [paths]
-
-    select_expr = []
-    for path in paths:
-        full_path = f"{json_column}.{path}"
-        if explode_arrays and "[]" in path:
-            # Handle array fields if explode_arrays is True
-            array_path, field_path = path.split("[]", 1)
-            field_path = field_path.lstrip(".")
-            select_expr.append(explode(col(f"{json_column}.{array_path}")).alias(array_path))
-            select_expr.append(col(f"{array_path}.{field_path}").alias(path.replace(".", "_").replace("[]", "")))
-        else:
-            select_expr.append(col(full_path).alias(path.replace(".", "_")))
-
-    return df.select("*", *select_expr)
-
-def get_all_leaf_nodes(schema: StructType, prefix: str = "") -> List[str]:
-    """
-    Recursively get all leaf node paths from a StructType schema.
-
-    Args:
-        schema (StructType): The schema to explore.
-        prefix (str, optional): The current path prefix. Defaults to "".
-
-    Returns:
-        List[str]: A list of all leaf node paths.
-
-    Example:
-        >>> json_schema = infer_json_schema(df, "data")
-        >>> all_paths = get_all_leaf_nodes(json_schema)
-        >>> print(all_paths)
-    """
-    paths = []
-    for field in schema.fields:
-        new_prefix = f"{prefix}.{field.name}" if prefix else field.name
-        if isinstance(field.dataType, StructType):
-            paths.extend(get_all_leaf_nodes(field.dataType, new_prefix))
-        elif isinstance(field.dataType, ArrayType):
-            if isinstance(field.dataType.elementType, StructType):
-                paths.extend(get_all_leaf_nodes(field.dataType.elementType, f"{new_prefix}[]"))
+    def unpack_struct(df, parent_col):
+        struct_fields = df.select(f"{parent_col}.*").columns
+        for field in struct_fields:
+            col_name = f"{parent_col}.{field}" if parent_col else field
+            field_type = df.select(col_name).schema[0].dataType
+            
+            if isinstance(field_type, StructType):
+                df = unpack_struct(df, col_name)
+            elif isinstance(field_type, ArrayType):
+                if isinstance(field_type.elementType, StructType):
+                    df = df.withColumn(f"{col_name}_exploded", explode_outer(col(col_name)))
+                    df = unpack_struct(df, f"{col_name}_exploded")
+                    df = df.drop(f"{col_name}_exploded")
+                else:
+                    df = df.withColumn(col_name, col(col_name))
             else:
-                paths.append(f"{new_prefix}[]")
-        else:
-            paths.append(new_prefix)
-    return paths
+                df = df.withColumn(col_name, col(col_name))
+        return df
+    
+    return unpack_struct(df, column_name)
 
-# Example usage:
-# json_schema = infer_json_schema(df, "data")
-# all_paths = get_all_leaf_nodes(json_schema)
-# extracted_df = extract_nested_values(parsed_df, "json_data", all_paths, explode_arrays=True)
+# Usage example:
+# Assuming 'df' is your DataFrame and 'parsed_json' is the structured column
+# unpacked_df = unpack_structured_column(df, "parsed_json")
+
+
 
 ```
