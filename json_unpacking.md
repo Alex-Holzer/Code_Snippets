@@ -194,4 +194,57 @@ def unpack_structured_column(df, column_name, num_objects=None):
 # unpacked_df = unpack_structured_column(unpacked_df, "parsed_json_lvv")
 # unpacked_df = unpack_structured_column(unpacked_df, "parsed_json_vtg")
 
+
+
+#-------------- Identify Array Structure---------
+
+from pyspark.sql.types import ArrayType, StructType, DataType
+from typing import Dict, List, Union
+
+def identify_array_objects(df, column_name: str = None) -> Dict[str, Union[str, List[str]]]:
+    """
+    Identifies all objects in specified column(s) that are in an array.
+    If no column is specified, it checks all columns in the DataFrame.
+
+    Args:
+    df (DataFrame): The input PySpark DataFrame.
+    column_name (str, optional): The name of the column to check. If None, checks all columns.
+
+    Returns:
+    Dict[str, Union[str, List[str]]]: A dictionary where keys are column names and values are either
+                                      the type of array elements or a list of struct field names.
+    """
+    def analyze_datatype(dt: DataType, prefix: str = "") -> Union[str, List[str]]:
+        if isinstance(dt, ArrayType):
+            if isinstance(dt.elementType, StructType):
+                return [f"{prefix}{field.name}" for field in dt.elementType.fields]
+            else:
+                return str(dt.elementType)
+        elif isinstance(dt, StructType):
+            return [f"{prefix}{field.name}" for field in dt.fields]
+        else:
+            return str(dt)
+
+    result = {}
+    
+    if column_name:
+        columns_to_check = [column_name]
+    else:
+        columns_to_check = df.columns
+
+    for col in columns_to_check:
+        field = df.schema[col]
+        if isinstance(field.dataType, ArrayType):
+            result[col] = analyze_datatype(field.dataType.elementType)
+
+    return result
+
+# Usage example:
+# array_objects = identify_array_objects(df)
+# print(array_objects)
+
+# To check a specific column:
+# array_objects = identify_array_objects(df, "your_array_column")
+# print(array_objects)
+
 ```
