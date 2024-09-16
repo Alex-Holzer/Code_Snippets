@@ -247,4 +247,100 @@ def identify_array_objects(df, column_name: str = None) -> Dict[str, Union[str, 
 # array_objects = identify_array_objects(df, "your_array_column")
 # print(array_objects)
 
+--- split -------
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import col, explode_outer, posexplode_outer
+from typing import List, Dict
+
+def create_dataframes_from_array(df: DataFrame, column_name: str) -> List[DataFrame]:
+    """
+    Creates individual PySpark DataFrames for each array object in a specific column.
+
+    Args:
+    df (DataFrame): The input PySpark DataFrame.
+    column_name (str): The name of the column containing the array.
+
+    Returns:
+    List[DataFrame]: A list of DataFrames, each representing an object from the array.
+    """
+    # First, identify if the column is an array and what it contains
+    array_info = identify_array_objects(df, column_name)
+    
+    if column_name not in array_info:
+        raise ValueError(f"Column '{column_name}' is not an array type.")
+
+    # Get the size of the array
+    array_size = df.select(F.size(col(column_name)).alias("array_size")).agg(F.max("array_size")).collect()[0][0]
+
+    # Create a list to store our DataFrames
+    result_dfs = []
+
+    # For each index in the array, create a new DataFrame
+    for i in range(array_size):
+        # Extract the i-th element of the array
+        df_i = df.select(col(f"{column_name}[{i}]").alias(column_name))
+        
+        # If the array contains structs, we need to unpack it
+        if isinstance(array_info[column_name], list):
+            for field in array_info[column_name]:
+                df_i = df_i.withColumn(field, col(f"{column_name}.{field}"))
+            # Drop the original struct column
+            df_i = df_i.drop(column_name)
+        
+        result_dfs.append(df_i)
+
+    return result_dfs
+
+# Usage example:
+# Assuming 'df' is your DataFrame and 'array_column' is the column containing the array
+# array_dfs = create_dataframes_from_array(df, "array_column")
+
+# To work with individual DataFrames:
+# for i, df_i in enumerate(array_dfs):
+#     print(f"DataFrame for object {i}:")
+#     df_i.show()
+
+# Assuming 'df' is your original DataFrame and 'array_column' is the column containing the array
+array_dfs = create_dataframes_from_array(df, "array_column")
+
+# To work with individual DataFrames:
+for i, df_i in enumerate(array_dfs):
+    print(f"DataFrame for object {i}:")
+    df_i.show()
+
+
+# ---------- Array Structure -------
+from pyspark.sql import DataFrame
+from pyspark.sql.types import ArrayType, StructType
+from typing import Dict, Union, List
+
+def identify_array_columns(df: DataFrame) -> Dict[str, Union[str, List[str]]]:
+    """
+    Identifies all columns in a PySpark DataFrame that have an array structure.
+
+    Args:
+    df (DataFrame): The input PySpark DataFrame.
+
+    Returns:
+    Dict[str, Union[str, List[str]]]: A dictionary where keys are column names with array structure,
+                                      and values are either the type of array elements (as a string)
+                                      or a list of field names for arrays of structs.
+    """
+    array_columns = {}
+
+    for field in df.schema.fields:
+        if isinstance(field.dataType, ArrayType):
+            if isinstance(field.dataType.elementType, StructType):
+                array_columns[field.name] = [f.name for f in field.dataType.elementType.fields]
+            else:
+                array_columns[field.name] = str(field.dataType.elementType)
+
+    return array_columns
+
+# Usage example:
+# array_cols = identify_array_columns(df)
+# for col, content in array_cols.items():
+#     print(f"Column '{col}' is an array of: {content}")
+
+
 ```
