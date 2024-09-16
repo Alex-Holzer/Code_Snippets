@@ -343,4 +343,58 @@ def identify_array_columns(df: DataFrame) -> Dict[str, Union[str, List[str]]]:
 #     print(f"Column '{col}' is an array of: {content}")
 
 
+
+# -------- filter based on array ---------
+
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import col, array_contains, explode, expr
+
+def filter_array_column(df: DataFrame, array_column: str, condition: str) -> DataFrame:
+    """
+    Filters a DataFrame based on a condition applied to elements in an array column.
+
+    Args:
+    df (DataFrame): The input PySpark DataFrame.
+    array_column (str): The name of the array column to filter on.
+    condition (str): A string representing the condition to apply.
+                     Use '{col}' as a placeholder for the array elements.
+                     For nested fields, use dot notation, e.g., '{col}.field'.
+
+    Returns:
+    DataFrame: A filtered DataFrame.
+
+    Examples:
+    # Filter rows where any element in the array is greater than 5
+    df_filtered = filter_array_column(df, 'numbers', '{col} > 5')
+
+    # Filter rows where the 'atr' field of any element in 'parsed_json_lvks' is 'some_value'
+    df_filtered = filter_array_column(df, 'parsed_json_lvks', "{col}.atr == 'some_value'")
+    """
+    # Check if the column exists
+    if array_column not in df.columns:
+        raise ValueError(f"Column '{array_column}' does not exist in the DataFrame.")
+
+    # Check if the column is of ArrayType
+    if not isinstance(df.schema[array_column].dataType, ArrayType):
+        raise ValueError(f"Column '{array_column}' is not an array type.")
+
+    # Replace the placeholder in the condition with the actual column reference
+    array_condition = condition.replace("{col}", "element")
+
+    # Apply the filter
+    df_filtered = df.withColumn("element", explode(col(array_column))) \
+                    .filter(expr(array_condition)) \
+                    .drop("element") \
+                    .distinct()
+
+    return df_filtered
+
+# Usage examples:
+# df_filtered = filter_array_column(df, 'parsed_json_lvks', "{col}.atr == 'some_value'")
+# df_filtered = filter_array_column(df, 'parsed_json_lvks', "array_contains({col}.atr, 'some_value')")
+# df_filtered = filter_array_column(df, 'numbers', '{col} > 5')
+
+
+
+
 ```
