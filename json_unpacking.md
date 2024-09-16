@@ -1,11 +1,12 @@
 ```python
 
-from pyspark.sql.functions import col, explode_outer
+from pyspark.sql.functions import col
 from pyspark.sql.types import StructType, ArrayType
 
 def unpack_structured_column(df, column_name):
     """
-    Recursively unpacks a structured column in a PySpark DataFrame, handling arrays correctly.
+    Recursively unpacks a structured column in a PySpark DataFrame, 
+    flattening nested structures while preserving array columns.
     
     Args:
     df (DataFrame): The input PySpark DataFrame.
@@ -14,25 +15,28 @@ def unpack_structured_column(df, column_name):
     Returns:
     DataFrame: The DataFrame with the unpacked columns.
     """
-    def unpack_struct(df, parent_col):
-        struct_fields = df.select(f"{parent_col}.*").columns
-        for field in struct_fields:
-            col_name = f"{parent_col}.{field}" if parent_col else field
-            field_type = df.select(col_name).schema[0].dataType
-            
-            if isinstance(field_type, StructType):
-                df = unpack_struct(df, col_name)
-            elif isinstance(field_type, ArrayType):
-                if isinstance(field_type.elementType, StructType):
-                    exploded_col_name = f"{col_name}_exploded"
-                    df = df.withColumn(exploded_col_name, explode_outer(col(col_name)))
-                    df = unpack_struct(df, exploded_col_name)
-                    # Keep the original array column
-                    df = df.drop(exploded_col_name)
-                else:
-                    df = df.withColumn(col_name, col(col_name))
+    def flatten_struct(schema, prefix=""):
+        flat_fields = []
+        for field in schema.fields:
+            name = prefix + field.name
+            if isinstance(field.dataType, StructType):
+                flat_fields.extend(flatten_struct(field.dataType, name + "."))
             else:
-                df = df.withColumn(col_name, col(col_name))
+                flat_fields.append(name)
+        return flat_fields
+
+    def unpack_struct(df, parent_col):
+        field_type = df.select(parent_col).schema[0].dataType
+        if isinstance(field_type, StructType):
+            flat_fields = flatten_struct(field_type)
+            for flat_field in flat_fields:
+                full_name = f"{parent_col}.{flat_field}"
+                df = df.withColumn(full_name.replace(".", "_"), col(full_name))
+        elif isinstance(field_type, ArrayType):
+            # For array types, we keep the column as is
+            df = df.withColumn(parent_col, col(parent_col))
+        else:
+            df = df.withColumn(parent_col, col(parent_col))
         return df
     
     return unpack_struct(df, column_name)
