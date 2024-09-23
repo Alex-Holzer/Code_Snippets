@@ -1,77 +1,103 @@
 ```python
 
-from pyspark.sql import DataFrame
-from pyspark.sql.functions import col
-from pyspark.sql.types import StructType, StructField, ArrayType
-from typing import List
-
-# Assuming 'df' is your original DataFrame and 'data' is the column with the nested StructType
-# Let's also assume that the nested column is named 'data'
-
-# Function to recursively flatten the schema and collect field names
-def flatten_schema(schema: StructType, prefix: str = None) -> List[str]:
+def flatten_schema(schema: StructType, prefix: str = '') -> List[str]:
     fields = []
     for field in schema.fields:
-        field_name = f"{prefix}_{field.name}" if prefix else field.name
+        # Construct the new field name
+        new_prefix = f"{prefix}_{field.name}" if prefix else field.name
         if isinstance(field.dataType, StructType):
             # Recursively flatten structs
-            fields += flatten_schema(field.dataType, field_name)
+            fields += flatten_schema(field.dataType, prefix=new_prefix)
         elif isinstance(field.dataType, ArrayType) and isinstance(field.dataType.elementType, StructType):
-            # For arrays of structs, flatten the struct fields but keep the array
-            array_fields = flatten_schema(field.dataType.elementType, field_name)
-            fields += array_fields
+            # Handle arrays of structs
+            # Optionally, you can decide whether to explode these arrays
+            fields += flatten_schema(field.dataType.elementType, prefix=new_prefix)
         else:
-            fields.append(field_name)
+            fields.append(new_prefix)
     return fields
 
-# Function to generate column expressions for the flattened DataFrame
-def flatten_df(df: DataFrame, prefix: str = None) -> DataFrame:
-    # Get the schema of the nested column
-    nested_schema = df.schema['data'].dataType
-    # Get all field names from the nested schema
-    field_names = flatten_schema(nested_schema, prefix='data')
-    
-    # Generate column expressions
-    def generate_cols(schema: StructType, prefix: str = 'data') -> List[col]:
-        cols = []
-        for field in schema.fields:
-            field_name = f"{prefix}.{field.name}"
-            alias_name = f"{prefix}_{field.name}"
-            if isinstance(field.dataType, StructType):
-                # Recursively handle nested structs
-                cols += generate_cols(field.dataType, field_name)
-            elif isinstance(field.dataType, ArrayType) and isinstance(field.dataType.elementType, StructType):
-                # Keep arrays of structs without exploding
-                # Flatten the struct fields within the array elements
-                array_struct_fields = field.dataType.elementType.fields
-                for sub_field in array_struct_fields:
-                    sub_field_name = f"{field_name}.{sub_field.name}"
-                    sub_alias_name = f"{alias_name}_{sub_field.name}"
-                    cols.append(col(sub_field_name).alias(sub_alias_name))
+
+from pyspark.sql.functions import col, explode_outer
+
+def generate_flattened_cols(schema: StructType, prefix: str = '', array_explode: bool = False) -> List[col]:
+    cols = []
+    for field in schema.fields:
+        field_name = field.name
+        new_prefix = f"{prefix}_{field_name}" if prefix else field_name
+        if isinstance(field.dataType, StructType):
+            # Recursively handle nested structs
+            cols += generate_flattened_cols(field.dataType, prefix=new_prefix, array_explode=array_explode)
+        elif isinstance(field.dataType, ArrayType) and isinstance(field.dataType.elementType, StructType):
+            if array_explode:
+                # Explode arrays of structs
+                cols.append(explode_outer(col(f"{prefix}.{field_name}")).alias(new_prefix))
+                # After exploding, flatten the inner struct
+                cols += generate_flattened_cols(field.dataType.elementType, prefix=new_prefix, array_explode=array_explode)
             else:
-                cols.append(col(field_name).alias(alias_name))
-        return cols
-    
-    # Apply the column expressions to the DataFrame
-    cols = generate_cols(nested_schema)
-    flattened_df = df.select(*cols)
+                # Keep arrays as is, but flatten the struct fields within
+                element_schema = field.dataType.elementType
+                for subfield in element_schema.fields:
+                    element_field_name = subfield.name
+                    array_col_name = f"{prefix}.{field_name}.{element_field_name}"
+                    array_alias_name = f"{new_prefix}_{element_field_name}"
+                    cols.append(col(array_col_name).alias(array_alias_name))
+        else:
+            cols.append(col(f"{prefix}.{field_name}").alias(new_prefix))
+    return cols
+
+
+def flatten_df(df: DataFrame, nested_column: str = 'data', array_explode: bool = False) -> DataFrame:
+    # Get the schema of the nested column
+    nested_schema = df.schema[nested_column].dataType
+    # Generate column expressions
+    cols = generate_flattened_cols(nested_schema, prefix=nested_column, array_explode=array_explode)
+    # Include non-nested columns if needed
+    other_cols = [col(c) for c in df.columns if c != nested_column]
+    # Select and flatten the DataFrame
+    flattened_df = df.select(*other_cols, *cols)
     return flattened_df
 
-# Apply the flattening function to the DataFrame
-flattened_df = flatten_df(df)
 
-# Save the flattened DataFrame as a Delta table
-# Configure optimal write settings for large datasets
-# For example, you might want to repartition the DataFrame before writing
+# Flatten the DataFrame without exploding arrays
+flattened_df = flatten_df(df, nested_column='data', array_explode=False)
 
-# Repartition the DataFrame if necessary (e.g., by a specific column)
-# flattened_df = flattened_df.repartition("some_partition_column")
 
-# Write to Delta table
-flattened_df.write.format("delta").mode("overwrite").save("/path/to/delta/table")
+# Flatten the DataFrame with exploding arrays
+flattened_df = flatten_df(df, nested_column='data', array_explode=True)
 
-# Alternatively, save as a managed Delta table in a metastore
-# flattened_df.write.format("delta").mode("overwrite").saveAsTable("database.flattened_table")
+
+# Assuming 'df' is your original DataFrame with the nested 'data' column
+
+# Option A: Flatten without exploding arrays
+flattened_df = flatten_df(df, nested_column='data', array_explode=False)
+
+# Optionally, you can rename columns to remove the 'data_' prefix for readability
+for col_name in flattened_df.columns:
+    if col_name.startswith('data_'):
+        new_col_name = col_name[len('data_'):]  # Remove 'data_' prefix
+        flattened_df = flattened_df.withColumnRenamed(col_name, new_col_name)
+
+
+from pyspark.sql.functions import size
+
+# Filter rows where the array column is not null and has elements
+flattened_df = flattened_df.filter(size(col('array_column_name')) > 0)
+
+
+from pyspark.sql.functions import when
+
+# Replace null arrays with empty arrays
+flattened_df = flattened_df.withColumn('array_column_name', when(col('array_column_name').isNull(), []).otherwise(col('array_column_name')))
+
+
+
+from pyspark.sql.functions import expr
+
+# Remove null elements from arrays
+flattened_df = flattened_df.withColumn('array_column_name', expr("filter(array_column_name, x -> x is not null)"))
+
+
+
 
 
 -------------
