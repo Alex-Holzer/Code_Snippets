@@ -1,8 +1,8 @@
 ```python
 
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, from_json, regexp_replace
-from pyspark.sql.types import StructType, StringType
+from pyspark.sql.functions import col, from_json, schema_of_json, regexp_replace
+from pyspark.sql.types import StringType
 
 def extract_json_to_columns(df: DataFrame, column_name: str) -> DataFrame:
     """
@@ -44,8 +44,7 @@ def extract_json_to_columns(df: DataFrame, column_name: str) -> DataFrame:
     df = df.withColumn(column_name, regexp_replace(col(column_name), "'", '"'))
 
     # Infer the schema from the JSON-like string
-    sample_json = df.select(column_name).first()[0]
-    schema = StructType.fromJson(eval(sample_json))
+    schema = df.select(schema_of_json(col(column_name))).first()[0]
 
     # Convert the JSON-like string to a struct
     df = df.withColumn(column_name, from_json(col(column_name), schema))
@@ -56,4 +55,5 @@ def extract_json_to_columns(df: DataFrame, column_name: str) -> DataFrame:
         df = df.withColumn(new_column_name, col(f"{column_name}.{field.name}").cast(StringType()))
 
     return df
+
 ```
