@@ -1,8 +1,7 @@
 ```python
-
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, from_json, schema_of_json, regexp_replace
-from pyspark.sql.types import StringType
+from pyspark.sql.functions import col, from_json, regexp_replace, to_json
+from pyspark.sql.types import StructType, StructField, StringType
 
 def extract_json_to_columns(df: DataFrame, column_name: str) -> DataFrame:
     """
@@ -43,8 +42,21 @@ def extract_json_to_columns(df: DataFrame, column_name: str) -> DataFrame:
     # Clean up the JSON-like string by replacing single quotes with double quotes
     df = df.withColumn(column_name, regexp_replace(col(column_name), "'", '"'))
 
-    # Infer the schema from the JSON-like string
-    schema = df.select(schema_of_json(col(column_name))).first()[0]
+    # Convert the column to a proper JSON string
+    df = df.withColumn(column_name, to_json(col(column_name)))
+
+    # Sample the data to infer the schema
+    sample_data = df.select(column_name).limit(100).collect()
+    all_keys = set()
+    for row in sample_data:
+        try:
+            json_data = eval(row[column_name])
+            all_keys.update(json_data.keys())
+        except:
+            continue
+
+    # Create a schema based on the keys found
+    schema = StructType([StructField(key, StringType(), True) for key in all_keys])
 
     # Convert the JSON-like string to a struct
     df = df.withColumn(column_name, from_json(col(column_name), schema))
@@ -52,8 +64,7 @@ def extract_json_to_columns(df: DataFrame, column_name: str) -> DataFrame:
     # Extract each field from the struct and create new columns
     for field in schema.fields:
         new_column_name = f"{column_name}_{field.name}"
-        df = df.withColumn(new_column_name, col(f"{column_name}.{field.name}").cast(StringType()))
+        df = df.withColumn(new_column_name, col(f"{column_name}.{field.name}"))
 
     return df
-
 ```
