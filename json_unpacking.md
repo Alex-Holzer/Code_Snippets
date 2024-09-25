@@ -68,4 +68,63 @@ def extract_json_to_columns(df: DataFrame, column_name: str) -> DataFrame:
     # df = df.drop(column_name)
 
     return df
+
+
+
+
+
+------
+
+
+def expand_json_column(df, column_name):
+    """
+    Expands a JSON string column into separate columns for each key-value pair.
+    
+    Parameters:
+    df (DataFrame): The input PySpark DataFrame.
+    column_name (str): The name of the column containing JSON strings.
+    
+    Returns:
+    DataFrame: The DataFrame with additional columns for each key in the JSON strings.
+    """
+    from pyspark.sql.functions import col, from_json, schema_of_json, lit
+    from pyspark.sql.types import StructType
+
+    # Get a sample JSON string to infer the schema
+    sample_json_row = df.select(col(column_name)) \
+                        .filter(col(column_name).isNotNull() & (col(column_name) != '')) \
+                        .limit(1) \
+                        .collect()
+
+    if not sample_json_row:
+        # If the column has no valid JSON strings, return the original DataFrame
+        return df
+
+    sample_json_str = sample_json_row[0][column_name]
+
+    # Infer the JSON schema from the sample string
+    json_schema = schema_of_json(lit(sample_json_str))
+
+    # Parse the JSON strings into struct columns using the inferred schema
+    df_with_struct = df.withColumn(
+        f"{column_name}_struct",
+        from_json(col(column_name), json_schema)
+    )
+
+    # Extract field names from the schema
+    struct_fields = json_schema.fieldNames()
+
+    # Create new columns for each key in the JSON, prefixed with the original column name
+    for field in struct_fields:
+        df_with_struct = df_with_struct.withColumn(
+            f"{column_name}_{field}",
+            col(f"{column_name}_struct.{field}")
+        )
+
+    # Drop the intermediate struct column
+    df_final = df_with_struct.drop(f"{column_name}_struct")
+
+    return df_final
+
+
 ```
