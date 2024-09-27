@@ -49,3 +49,55 @@ Develop a PySpark application to process and analyze large-scale user activity l
 ---
 
 By explicitly requesting **clean**, **reusable** code that achieves a **perfect pylint score**, this refined prompt guides the LLM to focus on producing code that meets high-quality standards while ensuring clarity, reusability, and best practices.
+
+To create an effective prompt template for designing a PySpark/Python function, the template should cover all essential aspects necessary to understand, implement, and utilize the function. Here's a structured outline that encapsulates these key components:
+
+1. **Title**:
+   - A concise title that reflects the main functionality of the function.
+
+2. **Introduction**:
+   - A brief description of the function’s purpose and its relevance.
+   - Mention any specific domain (like data processing, machine learning, etc.) where the function is applicable.
+
+3. **Requirements and Dependencies**:
+   - List of required libraries or modules (e.g., PySpark SQL, DataFrame API).
+   - Version compatibility if relevant (e.g., Python version, Spark version).
+
+4. **Function Signature**:
+   - Function name.
+   - Parameters with types and default values.
+   - Return type.
+
+5. **Parameters Description**:
+   - Detailed description of each parameter.
+   - Purpose of each parameter and how it affects the function’s behavior.
+
+6. **Return Value Description**:
+   - Explanation of what the function returns.
+   - Type of the return value.
+
+7. **Step-by-Step Implementation**:
+   - Key algorithm steps or logic the function will implement.
+   - Pseudocode or bullet points to describe the sequence of operations within the function.
+
+8. **Error Handling**:
+   - Common exceptions or errors the function could encounter.
+   - How these errors are handled or mitigated within the function.
+
+9. **Sample Code**:
+   - A simple example that demonstrates how to call the function.
+   - Explanation of the sample code to illustrate the function’s practical use.
+
+10. **Performance Considerations**:
+    - Any considerations regarding the efficiency or performance of the function.
+    - Tips for optimizing performance, especially in a distributed computing environment like Spark.
+
+11. **Use Cases**:
+    - Examples of real-world scenarios or problems where this function can be applied.
+    - This section helps in understanding the applicability of the function in practical settings.
+
+12. **Testing**:
+    - Suggestions for how to test the function.
+    - Possible test cases or scenarios to consider.
+
+This prompt template is designed to be thorough and structured, enabling a clear understanding of what the function does, how it should be implemented, and its practical applications. This template is especially useful in a professional or educational setting where clarity and detail are paramount.
