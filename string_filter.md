@@ -1,5 +1,6 @@
 ```python
 
+
 def filter_dataframe(dataframe, filter_column, search_column, pattern_list):
     """
     Filters a DataFrame based on patterns in the filter_column and returns rows where the search_column
