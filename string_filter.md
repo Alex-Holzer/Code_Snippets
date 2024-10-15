@@ -1,37 +1,77 @@
+```python
+
 from typing import List
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, rlike
+from pyspark.sql.functions import col
+from functools import reduce
+import operator
 
-def filter_by_patterns(df: DataFrame, column_name: str, patterns: List[str]) -> DataFrame:
+def filter_by_patterns_and_match_unique_values(
+    dataframe: DataFrame, 
+    filter_column: str, 
+    match_column: str, 
+    pattern_list: List[str]
+) -> DataFrame:
     """
-    Filters the DataFrame to retain rows where the specified column contains
-    any of the provided string patterns.
+    Filters rows in the DataFrame based on a list of patterns in the `filter_column`, 
+    then returns rows where the `match_column` matches the unique values associated 
+    with those patterns.
+
+    This function first finds rows in the DataFrame where the `filter_column` contains 
+    any of the given patterns. It then extracts the unique values from the `match_column` 
+    in those rows and filters the original DataFrame to return only the rows where 
+    `match_column` matches one of the unique values.
 
     Parameters
     ----------
-    df : DataFrame
+    dataframe : DataFrame
         The input PySpark DataFrame to be filtered.
-    column_name : str
-        The name of the column in which to search for the patterns.
-    patterns : List[str]
-        A list of string patterns to filter rows by.
+    filter_column : str
+        The column in which to search for patterns.
+    match_column : str
+        The column whose unique values, derived from rows matching the patterns in 
+        `filter_column`, will be used to filter the DataFrame.
+    pattern_list : List[str]
+        A list of string patterns to match against the `filter_column`.
 
     Returns
     -------
     DataFrame
-        A filtered DataFrame containing only the rows where the column contains any of the patterns.
+        A DataFrame filtered to include only rows where `match_column` contains 
+        unique values associated with the matching patterns in `filter_column`.
+
+    Example
+    -------
+    >>> df = spark.createDataFrame([
+    ...     ('apple', 'fruit'),
+    ...     ('banana', 'fruit'),
+    ...     ('carrot', 'vegetable'),
+    ...     ('apple pie', 'dessert')
+    ... ], ['name', 'category'])
+    >>> patterns = ['apple', 'banana']
+    >>> filter_by_patterns_and_match_unique_values(df, 'name', 'category', patterns).show()
+    +------+---------+
+    |  name| category|
+    +------+---------+
+    | apple|    fruit|
+    |banana|    fruit|
+    +------+---------+
     """
-    # Combine all patterns into a single regex expression joined by "|"
-    combined_pattern = "|".join(patterns)
+    
+    if not pattern_list:
+        # Return the original DataFrame if no patterns are provided
+        return dataframe
 
-    # Apply filter using rlike to match any of the patterns
-    return df.filter(col(column_name).rlike(combined_pattern))
+    # Combine all pattern conditions using the OR operator
+    combined_condition = reduce(operator.or_, [col(filter_column).contains(pattern) for pattern in pattern_list])
 
-# Example usage:
+    # Get the distinct match_column values where filter_column matches any pattern
+    unique_values_df = dataframe.filter(combined_condition).select(match_column).distinct()
 
-# Assuming 'spark' is your SparkSession and 'df' is your DataFrame
-patterns_list = ["pattern1", "pattern2", "pattern3"]
-filtered_df = filter_by_patterns(df, "your_column_name", patterns_list)
+    # Join original DataFrame with the unique values DataFrame to filter results
+    result_df = dataframe.join(unique_values_df, on=match_column, how='inner')
 
-# To display or collect the results:
-filtered_df.show()
+    return result_df
+
+```
+
