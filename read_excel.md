@@ -120,3 +120,64 @@ def get_combined_excel_dataframe(
 
 
 ```
+
+
+```python
+
+def read_excels_from_folder(folder_path):
+    # Import necessary modules
+    from functools import reduce
+    from pyspark.sql import DataFrame
+
+    # List all Excel files in the specified folder
+    files = [
+        file.path for file in dbutils.fs.ls(folder_path)
+        if file.path.endswith('.xlsx') or file.path.endswith('.xls')
+    ]
+
+    # Initialize lists to hold DataFrames and empty workbook paths
+    dfs = []
+    empty_workbooks = []
+
+    # Iterate over each file
+    for file_path in files:
+        try:
+            # Read the first worksheet of the Excel file
+            df = spark.read.format("com.crealytics.spark.excel") \
+                .option("dataAddress", "'0'") \
+                .option("useHeader", "true") \
+                .option("inferSchema", "false") \
+                .option("treatEmptyValuesAsNulls", "false") \
+                .option("addColorColumns", "false") \
+                .load(file_path)
+
+            # Check if the DataFrame is empty
+            if df.rdd.isEmpty():
+                empty_workbooks.append(file_path)
+                continue
+
+            # Append the DataFrame to the list
+            dfs.append(df)
+
+        except Exception as e:
+            # If there's an error (e.g., empty workbook), add to empty_workbooks
+            empty_workbooks.append(file_path)
+            continue
+
+    # Check if any DataFrames were created
+    if not dfs:
+        print("No dataframes to union.")
+        return None
+
+    # Union all DataFrames by column names
+    final_df = reduce(DataFrame.unionByName, dfs)
+
+    # Display messages for any empty workbooks skipped
+    if empty_workbooks:
+        print("Empty workbooks skipped:")
+        for wb in empty_workbooks:
+            print(wb)
+
+    # Return the final DataFrame
+    return final_df
+```
