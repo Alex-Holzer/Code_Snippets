@@ -124,60 +124,147 @@ def get_combined_excel_dataframe(
 
 ```python
 
-def read_excels_from_folder(folder_path):
-    # Import necessary modules
-    from functools import reduce
-    from pyspark.sql import DataFrame
+import pandas as pd
+import io
+import os
+import logging
+from typing import List, Optional
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
 
-    # List all Excel files in the specified folder
-    files = [
-        file.path for file in dbutils.fs.ls(folder_path)
-        if file.path.endswith('.xlsx') or file.path.endswith('.xls')
-    ]
+# Adjusted function to list Excel files
+def _list_excel_files(folder_path: str, recursive: bool, file_extension: str) -> List[str]:
+    """
+    List all Excel files in the specified folder using dbutils.
+    
+    Args:
+        folder_path (str): Path to the folder containing Excel files.
+        recursive (bool): Whether to search recursively.
+        file_extension (str): File extension to filter by.
+    
+    Returns:
+        List[str]: List of Excel file paths.
+    
+    Raises:
+        ValueError: If no matching files are found.
+    """
+    try:
+        all_files = []
+        paths = [folder_path]
+        while paths:
+            current_path = paths.pop()
+            files = dbutils.fs.ls(current_path)
+            for f in files:
+                if f.isDir() and recursive:
+                    paths.append(f.path)
+                elif f.path.endswith(f'.{file_extension}'):
+                    all_files.append(f.path)
+        if not all_files:
+            raise ValueError(f"No .{file_extension} files found in the specified folder: {folder_path}")
+        return all_files
+    except Exception as e:
+        logging.error(f"Error listing Excel files: {str(e)}")
+        raise
 
-    # Initialize lists to hold DataFrames and empty workbook paths
-    dfs = []
+# Adjusted function to read Excel files and convert to Spark DataFrames
+def _read_excel_to_spark_df(file_path: str, columns: Optional[List[str]] = None) -> Optional[DataFrame]:
+    """
+    Read an Excel file from a given path and convert it to a Spark DataFrame.
+
+    Args:
+        file_path (str): The path to the Excel file.
+
+    Returns:
+        Optional[DataFrame]: A Spark DataFrame containing the Excel data, or None if the workbook is empty.
+    """
+    try:
+        # Read binary content from the file using dbutils.fs.open
+        with dbutils.fs.open(file_path, 'rb') as f:
+            file_contents = f.read()
+
+        # Read Excel file from binary content
+        file_like_obj = io.BytesIO(file_contents)
+        pandas_df = pd.read_excel(
+            file_like_obj,
+            engine='openpyxl',   # Ensure compatibility with .xlsx files
+            sheet_name=0,        # Read the first worksheet
+            dtype=str            # Read all columns as strings
+        )
+
+        if pandas_df.empty:
+            return None  # Skip empty workbooks
+
+        # Convert Pandas DataFrame to Spark DataFrame
+        spark_df = spark.createDataFrame(pandas_df)
+
+        if columns:
+            spark_df = spark_df.select(*columns)
+
+        file_name = os.path.basename(file_path)
+        return spark_df.withColumn("source_file", F.lit(file_name))
+    except Exception as e:
+        logging.error(f"Error reading Excel file {file_path}: {str(e)}")
+        return None  # Treat exceptions as empty workbooks
+
+# Adjusted main function to combine DataFrames and handle empty workbooks
+def get_combined_excel_dataframe(
+    folder_path: str,
+    columns: Optional[List[str]] = None,
+    recursive: bool = False,
+    file_extension: str = "xlsx",
+) -> Optional[DataFrame]:
+    """
+    Retrieve and combine Excel files from a specified folder into a single DataFrame in Databricks.
+    
+    It retrieves Excel files, selects specified columns for each file,
+    and combines them using unionByName.
+
+    Args:
+        folder_path (str): The path to the folder containing Excel files.
+        recursive (bool, optional): If True, searches for files recursively in subfolders. Defaults to False.
+        file_extension (str, optional): The file extension to filter by. Defaults to "xlsx".
+        columns (Optional[List[str]], optional): List of columns to select from each file. If None, all columns are selected.
+
+    Returns:
+        Optional[DataFrame]: A DataFrame containing the combined data from all Excel files,
+                             or None if no data is available.
+
+    Raises:
+        ValueError: If no files with the specified extension are found in the given path.
+    """
+    logging.info(f"Reading Excel files from: {folder_path}")
     empty_workbooks = []
-
-    # Iterate over each file
-    for file_path in files:
-        try:
-            # Read the first worksheet of the Excel file
-            df = spark.read.format("com.crealytics.spark.excel") \
-                .option("dataAddress", "'0'") \
-                .option("useHeader", "true") \
-                .option("inferSchema", "false") \
-                .option("treatEmptyValuesAsNulls", "false") \
-                .option("addColorColumns", "false") \
-                .load(file_path)
-
-            # Check if the DataFrame is empty
-            if df.rdd.isEmpty():
-                empty_workbooks.append(file_path)
+    dataframes = []
+    try:
+        excel_files = _list_excel_files(folder_path, recursive, file_extension)
+        
+        # Read all Excel files individually, selecting specified columns
+        for file in excel_files:
+            df = _read_excel_to_spark_df(file, columns)
+            if df is None or df.rdd.isEmpty():
+                empty_workbooks.append(file)
                 continue
+            dataframes.append(df)
 
-            # Append the DataFrame to the list
-            dfs.append(df)
+        if not dataframes:
+            logging.warning("No dataframes to combine.")
+            return None
+        
+        # Combine all DataFrames using unionByName
+        combined_df = dataframes[0]
+        for df in dataframes[1:]:
+            combined_df = combined_df.unionByName(df, allowMissingColumns=True)
+        
+        if empty_workbooks:
+            print("Empty workbooks skipped:")
+            for wb in empty_workbooks:
+                print(wb)
+        
+        return combined_df
+        
+    except Exception as e:
+        logging.error(f"Error in get_combined_excel_dataframe: {str(e)}")
+        raise
 
-        except Exception as e:
-            # If there's an error (e.g., empty workbook), add to empty_workbooks
-            empty_workbooks.append(file_path)
-            continue
 
-    # Check if any DataFrames were created
-    if not dfs:
-        print("No dataframes to union.")
-        return None
-
-    # Union all DataFrames by column names
-    final_df = reduce(DataFrame.unionByName, dfs)
-
-    # Display messages for any empty workbooks skipped
-    if empty_workbooks:
-        print("Empty workbooks skipped:")
-        for wb in empty_workbooks:
-            print(wb)
-
-    # Return the final DataFrame
-    return final_df
 ```
