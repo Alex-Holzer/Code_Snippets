@@ -124,9 +124,6 @@ def get_combined_excel_dataframe(
 
 ```python
 
-%pip install adlfs openpyxl
-
-
 import pandas as pd
 import io
 import os
@@ -134,9 +131,8 @@ import logging
 from typing import List, Optional
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
-import adlfs
 
-# Adjusted function to list Excel files
+# Function to list Excel files
 def _list_excel_files(folder_path: str, recursive: bool, file_extension: str) -> List[str]:
     """
     List all Excel files in the specified folder using dbutils.
@@ -159,33 +155,25 @@ def _list_excel_files(folder_path: str, recursive: bool, file_extension: str) ->
         logging.error(f"Error listing Excel files: {str(e)}")
         raise
 
-# Adjusted function to read Excel files and convert to Spark DataFrames
+# Function to read Excel files and convert to Spark DataFrames
 def _read_excel_to_spark_df(file_path: str, columns: Optional[List[str]] = None) -> Optional[DataFrame]:
     """
     Read an Excel file from a given path and convert it to a Spark DataFrame.
     """
     try:
-        # Extract storage account and container information from the file path
-        # Example file_path: 'abfss://container@storage_account.dfs.core.windows.net/path/to/file.xlsx'
-        path_parts = file_path.replace('abfss://', '').split('@')
-        container = path_parts[0]
-        storage_account = path_parts[1].split('.dfs.core.windows.net')[0]
-        relative_path = '/'.join(path_parts[1].split('.dfs.core.windows.net/')[1:])
-
-        # Create an instance of Azure Datalake FileSystem
-        fs = adlfs.AzureBlobFileSystem(account_name=storage_account)
-
-        # Full path within the filesystem
-        fs_path = f"{container}/{relative_path}"
-
-        # Open the file using the filesystem
-        with fs.open(fs_path, 'rb') as f:
-            pandas_df = pd.read_excel(
-                f,
-                engine='openpyxl',   # Ensure compatibility with .xlsx files
-                sheet_name=0,        # Read the first worksheet
-                dtype=str            # Read all columns as strings
-            )
+        # Read the binary content of the file using spark.read.format("binaryFile")
+        binary_df = spark.read.format("binaryFile").load(file_path)
+        # Collect the binary content
+        binary_content = binary_df.select("content").collect()[0][0]
+        # Convert binary content to BytesIO object
+        file_like_obj = io.BytesIO(binary_content)
+        # Read Excel file using pandas
+        pandas_df = pd.read_excel(
+            file_like_obj,
+            engine='openpyxl',   # Ensure compatibility with .xlsx files
+            sheet_name=0,        # Read the first worksheet
+            dtype=str            # Read all columns as strings
+        )
 
         if pandas_df.empty:
             return None  # Skip empty workbooks
@@ -202,7 +190,7 @@ def _read_excel_to_spark_df(file_path: str, columns: Optional[List[str]] = None)
         logging.error(f"Error reading Excel file {file_path}: {str(e)}")
         return None  # Treat exceptions as empty workbooks
 
-# Adjusted main function to combine DataFrames and handle empty workbooks
+# Main function to combine DataFrames and handle empty workbooks
 def get_combined_excel_dataframe(
     folder_path: str,
     columns: Optional[List[str]] = None,
