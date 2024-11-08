@@ -124,6 +124,9 @@ def get_combined_excel_dataframe(
 
 ```python
 
+%pip install adlfs openpyxl
+
+
 import pandas as pd
 import io
 import os
@@ -131,22 +134,12 @@ import logging
 from typing import List, Optional
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
+import adlfs
 
 # Adjusted function to list Excel files
 def _list_excel_files(folder_path: str, recursive: bool, file_extension: str) -> List[str]:
     """
     List all Excel files in the specified folder using dbutils.
-    
-    Args:
-        folder_path (str): Path to the folder containing Excel files.
-        recursive (bool): Whether to search recursively.
-        file_extension (str): File extension to filter by.
-    
-    Returns:
-        List[str]: List of Excel file paths.
-    
-    Raises:
-        ValueError: If no matching files are found.
     """
     try:
         all_files = []
@@ -170,26 +163,29 @@ def _list_excel_files(folder_path: str, recursive: bool, file_extension: str) ->
 def _read_excel_to_spark_df(file_path: str, columns: Optional[List[str]] = None) -> Optional[DataFrame]:
     """
     Read an Excel file from a given path and convert it to a Spark DataFrame.
-
-    Args:
-        file_path (str): The path to the Excel file.
-
-    Returns:
-        Optional[DataFrame]: A Spark DataFrame containing the Excel data, or None if the workbook is empty.
     """
     try:
-        # Read binary content from the file using dbutils.fs.open
-        with dbutils.fs.open(file_path, 'rb') as f:
-            file_contents = f.read()
+        # Extract storage account and container information from the file path
+        # Example file_path: 'abfss://container@storage_account.dfs.core.windows.net/path/to/file.xlsx'
+        path_parts = file_path.replace('abfss://', '').split('@')
+        container = path_parts[0]
+        storage_account = path_parts[1].split('.dfs.core.windows.net')[0]
+        relative_path = '/'.join(path_parts[1].split('.dfs.core.windows.net/')[1:])
 
-        # Read Excel file from binary content
-        file_like_obj = io.BytesIO(file_contents)
-        pandas_df = pd.read_excel(
-            file_like_obj,
-            engine='openpyxl',   # Ensure compatibility with .xlsx files
-            sheet_name=0,        # Read the first worksheet
-            dtype=str            # Read all columns as strings
-        )
+        # Create an instance of Azure Datalake FileSystem
+        fs = adlfs.AzureBlobFileSystem(account_name=storage_account)
+
+        # Full path within the filesystem
+        fs_path = f"{container}/{relative_path}"
+
+        # Open the file using the filesystem
+        with fs.open(fs_path, 'rb') as f:
+            pandas_df = pd.read_excel(
+                f,
+                engine='openpyxl',   # Ensure compatibility with .xlsx files
+                sheet_name=0,        # Read the first worksheet
+                dtype=str            # Read all columns as strings
+            )
 
         if pandas_df.empty:
             return None  # Skip empty workbooks
@@ -215,22 +211,6 @@ def get_combined_excel_dataframe(
 ) -> Optional[DataFrame]:
     """
     Retrieve and combine Excel files from a specified folder into a single DataFrame in Databricks.
-    
-    It retrieves Excel files, selects specified columns for each file,
-    and combines them using unionByName.
-
-    Args:
-        folder_path (str): The path to the folder containing Excel files.
-        recursive (bool, optional): If True, searches for files recursively in subfolders. Defaults to False.
-        file_extension (str, optional): The file extension to filter by. Defaults to "xlsx".
-        columns (Optional[List[str]], optional): List of columns to select from each file. If None, all columns are selected.
-
-    Returns:
-        Optional[DataFrame]: A DataFrame containing the combined data from all Excel files,
-                             or None if no data is available.
-
-    Raises:
-        ValueError: If no files with the specified extension are found in the given path.
     """
     logging.info(f"Reading Excel files from: {folder_path}")
     empty_workbooks = []
